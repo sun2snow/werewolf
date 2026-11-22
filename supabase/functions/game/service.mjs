@@ -94,7 +94,8 @@ async function liveRooms(q) {
     rooms: rows.map((row) => {
       const mode = modeFromOptions(row.options);
       if (!mode || !row.options?.g) return null;
-      const g = row.options.g;
+      // The lobby must not reveal more about a phase than spectators can see.
+      const { day, phase, step, blood } = project(row.options.g, null);
       return {
         code: row.code,
         mode: mode.id,
@@ -103,10 +104,10 @@ async function liveRooms(q) {
         total: mode.roles.length,
         players: row.players,
         alive: row.alive,
-        day: g.day,
-        phase: g.phase,
-        step: g.step,
-        bloodmoon: Boolean(g.blood),
+        day,
+        phase,
+        step,
+        bloodmoon: Boolean(blood),
         createdAt: row.created_at,
       };
     }).filter(Boolean),

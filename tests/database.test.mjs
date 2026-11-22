@@ -356,10 +356,20 @@ test('v9 migration, concurrent games, dissolve and per-board matchmaking', async
   const queues = await db`select mode,room_code from match_queue`;
   assert.equal(queues.length, 6);
   assert.ok(queues.every((q) => q.mode === 'newbie6' && q.room_code === matchedCode));
-  const listed = await call(ids[6], 'list');
-  assert.equal(listed.rooms[0].code, matchedCode);
-  assert.equal(listed.rooms[0].players, 6);
+  const assertListedStage = async (phase, step) => {
+    const { rooms: [listed] } = await call(ids[6], 'list');
+    const { options: { g: watched } } = await call(ids[6], 'spectate', { code: matchedCode });
+    assert.equal(listed.code, matchedCode);
+    assert.equal(listed.players, 6);
+    assert.deepEqual([watched.phase, watched.step], [phase, step]);
+    assert.deepEqual([listed.phase, listed.step], [watched.phase, watched.step]);
+  };
+  await assertListedStage('night', 'night');
   await Promise.all(lobbyPlayers.map((id) => call(id, 'matchCancel')));
   assert.equal((await db`select count(*) n from match_queue`)[0].n, '0');
   await assert.rejects(call(ids[6], 'match', { mode: 'nope' }), /未知板子/);
+  // Seed the private death-confirmation phase without advancing the referee.
+  await db`update rooms set options=jsonb_set(options, '{g}',
+    (options->'g') || '{"phase":"hunter","step":"hunter"}'::jsonb) where rooms.code=${matchedCode}`;
+  await assertListedStage('settling', 'settling');
 });
