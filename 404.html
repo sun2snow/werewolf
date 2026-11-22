@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>狼人杀</title>
+</head>
+<body>
+  <p>正在进入房间…</p>
+  <noscript>需要启用 JavaScript 才能进入房间。</noscript>
+  <script>
+    (function () {
+      var path = location.pathname;
+      var room = path.match(/^(.*\/)games\/(\d{6})\/?$/);
+      if (room) {
+        location.replace(room[1] + '?room=' + room[2]);
+      } else {
+        location.replace(path.replace(/[^/]*$/, '') || '/');
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -198,6 +198,7 @@ const configured = Boolean(
 const client = configured ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_KEY) : null;
 
 let session = null;
+let pendingInviteCode = null;
 let pollTimer = null;
 let pollTick = 0;
 let busy = false;
@@ -293,6 +294,21 @@ function closeAuthModal() {
   if (els.authModal) els.authModal.hidden = true;
 }
 
+function siteBase() {
+  const room = location.pathname.match(/^(.*\/)games\/\d{6}\/?$/);
+  return room ? room[1] : location.pathname.replace(/[^/]*$/, '');
+}
+
+function roomUrl(code) {
+  return `${siteBase()}games/${code}`;
+}
+
+function syncUrl(url) {
+  try {
+    history.replaceState(history.state, '', url);
+  } catch { /* file:// or sandboxed frames keep the old address. */ }
+}
+
 function showRoom() {
   endSpectate();
   els.homeView.hidden = true;
@@ -300,6 +316,7 @@ function showRoom() {
   els.spectateView.hidden = true;
   els.replayView.hidden = true;
   closeAccountMenu();
+  if (session) syncUrl(roomUrl(session.code));
 }
 
 function showHome() {
@@ -309,6 +326,9 @@ function showHome() {
   els.replayView.hidden = true;
   endSpectate();
   closeAccountMenu();
+  if (session || (pendingInviteCode === null && /\/games\/\d{6}\/?$/.test(location.pathname))) {
+    syncUrl(siteBase());
+  }
   updateHomeRoomCard();
   if (client && accountApproved()) {
     loadLeaderboard();
@@ -935,6 +955,7 @@ function updateModeHint() {
 
 function enterRoom({ code, playerId, name }, firstSnapshot) {
   clearSettlementRetry();
+  pendingInviteCode = null;
   const active = session = { code, playerId, name };
   localStorage.setItem(membershipKey(), JSON.stringify({ ...active, accountId: profile?.id }));
   els.roomCodeLabel.textContent = code;
@@ -3000,14 +3021,12 @@ els.copyBtn.addEventListener('click', async () => {
 
 els.copyInviteBtn.addEventListener('click', async () => {
   if (!session) return;
-  const url = new URL(location.href);
-  url.hash = '';
-  url.search = `?room=${encodeURIComponent(session.code)}`;
+  const url = new URL(roomUrl(session.code), location.href).toString();
   try {
-    await navigator.clipboard.writeText(url.toString());
+    await navigator.clipboard.writeText(url);
     toast('邀请链接已复制，朋友打开会自动填好房号');
   } catch {
-    toast(`复制失败，邀请链接是 ${url.toString()}`);
+    toast(`复制失败，邀请链接是 ${url}`);
   }
 });
 
@@ -3395,8 +3414,10 @@ function boot() {
   }
 
   const params = new URLSearchParams(location.search);
-  const fromUrl = params.get('room');
+  const pathRoom = location.pathname.match(/\/games\/(\d{6})\/?$/);
+  const fromUrl = params.get('room') || (pathRoom ? pathRoom[1] : '');
   if (fromUrl && /^\d{6}$/.test(fromUrl)) {
+    pendingInviteCode = fromUrl;
     els.codeInput.value = fromUrl;
     if (els.inviteHint) {
       els.inviteHint.textContent = `朋友邀请你加入房间 ${fromUrl}，房号已填好；登录后点「加入房间」即可。`;

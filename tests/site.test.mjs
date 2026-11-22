@@ -16,6 +16,7 @@ test('offline preview serves the example instead of the live client config', asy
   vm.runInNewContext(await readFile(offline, 'utf8'), { window });
   assert.equal(window.WOLF_CONFIG.SUPABASE_KEY, '');
   assert.equal(preview.assetPath('/supabase/functions/game/index.ts', true), null);
+  assert.equal(preview.assetPath('/games/123456'), null); // handled by the room redirect, not as a file
 });
 
 test('static build works at a Pages subpath and excludes stale or server-only files', async t => {
@@ -48,6 +49,7 @@ test('static build works at a Pages subpath and excludes stale or server-only fi
   };
   await checkModule('js/demo.js');
   await access(join(out, '.nojekyll'));
+  assert.match(await readFile(join(out, '404.html'), 'utf8'), /games\\?\/\(\\d\{6\}\)/);
   const notices = await readFile(join(out, 'THIRD_PARTY_NOTICES.md'), 'utf8');
   for (const [, license] of notices.matchAll(/\((vendor\/licenses\/[^)]+)\)/g)) await access(join(out, license));
   for (const path of ['.env', '.git', 'node_modules', 'tests', 'examples', 'supabase/schema.sql',

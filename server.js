@@ -28,6 +28,14 @@ function assetPath(url, offline = false) {
 
 const offline = process.argv.includes('--offline');
 const server = http.createServer((req, res) => {
+  // Mirrors the live 404.html fallback for per-room URLs (GitHub Pages has no rewrites).
+  const pathname = new URL(req.url, 'http://localhost').pathname;
+  const room = pathname.match(/^\/games\/(\d{6})\/?$/);
+  if (room) {
+    res.writeHead(302, { Location: `/index.html?room=${room[1]}` });
+    res.end();
+    return;
+  }
   let filePath;
   try {
     filePath = assetPath(req.url, offline);
