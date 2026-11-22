@@ -7,13 +7,13 @@
   <link rel="icon" type="image/png" href="icon.png">
   <link rel="apple-touch-icon" href="icon.png">
   <link rel="stylesheet" href="vendor/bootstrap.min.css?v=4.6.2">
-  <link rel="stylesheet" href="styles.css?v=1.2.0">
+  <link rel="stylesheet" href="styles.css?v=1.3.0">
   <script defer src="vendor/supabase.js"></script>
   <script defer src="js/config.js?v=1.1.0"></script>
-  <script defer src="supabase/functions/_shared/modes.js?v=1.1.0"></script>
-  <script defer src="supabase/functions/_shared/rules.js?v=1.1.0"></script>
-  <script defer src="js/room-api.js?v=1.1.0-perf.6"></script>
-  <script defer src="js/app.js?v=1.1.0-perf.11"></script>
+  <script defer src="supabase/functions/_shared/modes.js?v=1.3.0"></script>
+  <script defer src="supabase/functions/_shared/rules.js?v=1.3.0"></script>
+  <script defer src="js/room-api.js?v=1.3.0"></script>
+  <script defer src="js/app.js?v=1.3.0"></script>
 </head>
 <body>
   <div class="sr-intro" id="srIntro" aria-hidden="true"><canvas class="sr-intro-canvas" id="srIntroCanvas"></canvas></div>
@@ -58,8 +58,8 @@
           <p class="mt-3 mb-0 text-muted small" id="inviteHint" hidden></p>
         </div>
         <div class="sr-hero-stats">
-          <div class="sr-stat"><span class="sr-stat-label">板子</span><strong>8</strong><small>种玩法</small></div>
-          <div class="sr-stat"><span class="sr-stat-label">人数</span><strong>6 / 9 / 12</strong><small>固定配置</small></div>
+          <div class="sr-stat"><span class="sr-stat-label">板子</span><strong>8</strong><small>种固定板子</small></div>
+          <div class="sr-stat"><span class="sr-stat-label">人数</span><strong>6–12</strong><small>支持自定义</small></div>
           <div class="sr-stat"><span class="sr-stat-label">初始分</span><strong>1500</strong><small>团队 Elo</small></div>
         </div>
       </div>
@@ -103,6 +103,7 @@
           <div class="form-row">
             <div class="col-md-6 mb-3 mb-md-0">
               <button id="createRoom" class="btn btn-dark btn-block" type="button">创建房间</button>
+              <button id="customRoomBtn" class="btn btn-outline-dark btn-block mt-2" type="button">自定义房间</button>
             </div>
             <div class="col-md-6">
               <form id="joinForm" class="input-group">
@@ -131,16 +132,16 @@
             </div>
             <div class="card-body sr-rules">
               <ol class="pl-3 mb-0">
-                <li>登录后选板子、点「创建房间」，把 6 位房间码发给朋友；每种板子人数固定，<strong>满员后房主开牌</strong>。昵称就是账号名，注册后不可改，评分也记在账号名上。</li>
-                <li>夜晚按顺序行动：盗贼换牌 → 丘比特连情侣 → 守卫守护 → 狼人刀人 → 狼美人魅惑 → 女巫用药 → 预言家查验，<strong>每一步都有 60 秒</strong>；<strong>狼人夜里可在「狼人频道」私聊</strong>。</li>
+                <li>登录后选板子、点「创建房间」，把 6 位房间码发给朋友；固定板子人数固定，<strong>满员后房主开牌</strong>。也可以点「自定义房间」自选 6–12 人与角色（不计 Elo）。昵称就是账号名，注册后不可改，评分也记在账号名上。</li>
+                <li>夜晚按顺序行动：盗贼换牌 → 丘比特连情侣 → 守卫守护 → 狼人刀人 → 狼美人魅惑 → 女巫用药 → 预言家查验，<strong>固定板子每一步 60 秒</strong>（自定义房间可设 60–120 秒）；<strong>狼人夜里可在「狼人频道」私聊</strong>。</li>
                 <li>首日天亮后<strong>先竞选警长</strong>（<strong>6 人新手局不设警长</strong>，天亮直接公布死讯）：候选人按座位顺序发言，没上警的存活玩家投票。平票进入警长 PK，再平票则没有警长；竞选期间狼人自爆会打断竞选、警徽流失。<strong>竞选结束后才公布昨夜死讯</strong>，首夜死者按座位顺序留遗言。警长每天决定发言方向，放逐和放逐 PK 时一票算 1.5 票。</li>
-                <li>有警长时，警长决定顺时针或逆时针，其他玩家从警长的下家按该方向依次发言，警长最后发言。没有警长时，从今天最小号死者的下家开始顺时针发言；没人出局则从 01 号开始。每人 60 秒，没轮到可以提前打字。讨论后同时投票；放逐平票进入 PK，再平票无人出局。</li>
+                <li>有警长时，警长决定顺时针或逆时针，其他玩家从警长的下家按该方向依次发言，警长最后发言。没有警长时，从今天最小号死者的下家开始顺时针发言；没人出局则从 01 号开始。每人 60 秒（自定义房间按设置），没轮到可以提前打字。讨论后同时投票；放逐平票进入 PK，再平票无人出局。</li>
                 <li>白天被放逐者<strong>先留遗言再开枪／确认出局</strong>，随后处理猎人选择、移交警徽。首夜夜间出局者有遗言；第 2 夜起夜死、自爆者及其带走者、决斗、离房者没有遗言；白天技能连带出局者有遗言。警长自爆或离房，警徽直接作废。</li>
-                <li><strong>自爆</strong>：普通狼人和白狼王在白天（含竞选、投票、遗言阶段）可以自爆，翻牌立即出局并跳过当天剩余流程、直接天黑；白狼王自爆还可以带走一人；自爆会打断正在进行的遗言；<strong>狼美人不能自爆</strong>。</li>
-                <li><strong>猎人</strong>：夜里或白天出局时自己决定<strong>翻牌</strong>（公开猎人身份，可以开枪带走一人）或<strong>不翻牌</strong>（身份保密、不开枪）；被毒杀、被白狼王直接带走、被请离或主动离房时不能发动技能。有猎人的板子中，普通角色被刀或被投出也可能收到出局确认；这个阶段不代表有人翻牌。</li>
-                <li><strong>计时</strong>：每个行动步骤、发言、投票、PK 和猎人选择都有固定的 <strong>60 秒</strong>，时间到自动继续，不再额外加时，也没有挂机标记。掉线不是出局：夜里离线玩家的回合会等满 60 秒再跳过，白天跳过离线者的发言；回到同一账号和房间可以继续玩。</li>
+                <li><strong>自爆</strong>：普通狼人、狼王和白狼王在白天（含竞选、投票、遗言阶段）可以自爆，翻牌立即出局并跳过当天剩余流程、直接天黑；白狼王、狼王自爆还可以带走一人；自爆会打断正在进行的遗言；<strong>狼美人不能自爆</strong>。</li>
+                <li><strong>猎人／狼王</strong>：夜里或白天出局时自己决定<strong>翻牌</strong>（公开身份，可以带走一人）或<strong>不翻牌</strong>（身份保密、不开枪）；被毒杀、被白狼王直接带走、被请离或主动离房时不能发动技能。有猎人／狼王的板子中，普通角色被刀或被投出也可能收到出局确认；这个阶段不代表有人翻牌。</li>
+                <li><strong>计时</strong>：固定板子每个行动步骤、发言、投票、PK 和出局选择均为 <strong>60 秒</strong>；自定义房间可在开房时设置夜间行动与每人发言时限（60–120 秒）。时间到自动继续，不再额外加时，也没有挂机标记。掉线不是出局：夜里离线玩家的回合会等满时限再跳过，白天跳过离线者的发言；回到同一账号和房间可以继续玩。</li>
                 <li>胜负按<strong>屠边</strong>：所有狼牌出局，好人获胜；神职或平民全部出局，狼人获胜。人狼情侣存活时另判第三方；同批出局的优先级见详细规则。</li>
-                <li><strong>评分</strong>：团队 Elo，初始 1500，对每位胜负相反的真人分别计算期望胜率，再取平均，同队同输赢，零和结算；6 / 9 / 12 人局 K 值分别为 32 / 28 / 24。</li>
+                <li><strong>评分</strong>：团队 Elo，初始 1500，对每位胜负相反的真人分别计算期望胜率，再取平均，同队同输赢，零和结算；6 / 9 / 12 人局 K 值分别为 32 / 28 / 24。自定义房间不计 Elo。</li>
                 <li><strong>旁观与回放</strong>：在首页输入房间码点「旁观对局」，可以不加入只看公开信息（白天发言、流程记录，看不到身份和狼人夜聊）；每局结束时服务端会把完整回放存进「历史对局」，<strong>包括狼人夜间讨论</strong>，审核通过的账号都能查看。</li>
               </ol>
             </div>
@@ -434,7 +435,7 @@
   </main>
 
   <footer class="sr-footer container">
-    v1.1.3 · 狼人杀在线版 · 规则与裁判按通行玩法校准 · <a href="https://github.com/legendcn/werewolf">GitHub 仓库</a>
+    v1.3.0 · 狼人杀在线版 · 规则与裁判按通行玩法校准 · <a href="https://github.com/legendcn/werewolf">GitHub 仓库</a>
   </footer>
 
   <div id="authModal" class="sr-modal" hidden>
@@ -494,6 +495,66 @@
           </div>
           <p id="authStatus" class="small text-muted mb-0 mt-3" hidden></p>
           <p class="small mb-0 mt-3"><a href="./rules.html" target="_blank" rel="noopener">先看游戏规则（无需登录，在新标签页打开）</a></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="customModal" class="sr-modal" hidden>
+    <div class="sr-modal-mask" data-custom-close></div>
+    <div class="sr-modal-body" role="dialog" aria-modal="true" aria-label="自定义房间">
+      <div class="card" id="customRoomCard">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <strong>自定义房间</strong>
+          <button id="customClose" class="close mb-0" type="button" aria-label="关闭"><span aria-hidden="true">×</span></button>
+        </div>
+        <div class="card-body">
+          <label class="small text-muted mb-1" for="customName">房间名称</label>
+          <input id="customName" class="form-control mb-3" maxlength="20" placeholder="例如：周五晚 12 人局" autocomplete="off">
+          <div class="d-flex justify-content-between align-items-baseline mb-2">
+            <strong class="sr-custom-title">角色配置 · 共 <span id="customTotal">12</span> 人</strong>
+            <button id="customSkillsToggle" class="btn btn-sm btn-link px-0" type="button">查看角色技能</button>
+          </div>
+          <div id="customSkillList" class="sr-custom-skills" hidden></div>
+          <div id="customRoleList" class="sr-custom-roles"></div>
+          <div class="d-flex flex-wrap justify-content-between align-items-center mt-2 mb-3">
+            <button id="customReset" class="btn btn-sm btn-link px-0" type="button">恢复标准局</button>
+            <small class="text-muted">至少 1 狼、1 好人，共 6–12 人</small>
+          </div>
+          <div class="form-row">
+            <div class="col-sm-6 col-md-3 mb-3">
+              <div class="small text-muted mb-1">上警</div>
+              <label class="sr-check mb-0"><input id="customSheriff" type="checkbox" checked> 开启上警</label>
+            </div>
+            <div class="col-sm-6 col-md-3 mb-3">
+              <div class="small text-muted mb-1">胜利条件</div>
+              <div class="sr-static">屠边（标准）</div>
+            </div>
+            <div class="col-sm-6 col-md-3 mb-3">
+              <label class="small text-muted mb-1" for="customNight">夜间行动时限</label>
+              <select id="customNight" class="form-control">
+                <option value="60000">60 秒</option>
+                <option value="75000" selected>75 秒</option>
+                <option value="90000">90 秒</option>
+                <option value="120000">120 秒</option>
+              </select>
+            </div>
+            <div class="col-sm-6 col-md-3 mb-3">
+              <label class="small text-muted mb-1" for="customSpeech">每人发言时限</label>
+              <select id="customSpeech" class="form-control">
+                <option value="60000">60 秒</option>
+                <option value="75000">75 秒</option>
+                <option value="90000" selected>90 秒</option>
+                <option value="120000">120 秒</option>
+              </select>
+            </div>
+          </div>
+          <div class="sr-custom-meta mb-3">
+            <span>私密房间 · 凭房号加入</span>
+            <span>自定义局不计入 Elo</span>
+          </div>
+          <button id="customCreate" class="btn btn-dark btn-block" type="button">创建房间</button>
+          <p id="customStatus" class="small text-muted mb-0 mt-2" hidden></p>
         </div>
       </div>
     </div>

@@ -1,5 +1,7 @@
 import { Rules } from './engine.mjs';
 
+const SHOOTER_ROLES = ['hunter', 'wolfboss'];
+
 export class GameError extends Error {}
 export function requireGame(condition, message) {
   if (!condition) throw new GameError(message);
@@ -104,7 +106,7 @@ export function submit(engine, me, cmd, actions) {
     (lastTurn && ['chat','lastwords'].includes(step)));
   const special = step === 'day' || step === 'wolfchat' ||
     (['vote', 'runoff', 'explode'].includes(step) && payload.explode === true &&
-      ['werewolf', 'wolfking'].includes(me.role));
+      ['werewolf', 'wolfking', 'wolfboss'].includes(me.role));
   check(engine.inTime(seat, special));
   if (step === 'chat' || step === 'wolfchat' || step === 'speech') {
     if (step === 'wolfchat') check(g.phase === 'night' && Rules.isWolfRole(me.role));
@@ -131,8 +133,9 @@ export function submit(engine, me, cmd, actions) {
   }
   if (['day', 'vote', 'runoff', 'explode'].includes(step) && payload.explode === true) {
     check(['day', 'vote', 'runoff', 'sheriff', 'order', 'lastwords'].includes(g.phase) &&
-      ['werewolf', 'wolfking'].includes(me.role));
-    check(target === null || (me.role === 'wolfking' && alive(target) && target !== seat));
+      ['werewolf', 'wolfking', 'wolfboss'].includes(me.role));
+    check(target === null ||
+      (['wolfking', 'wolfboss'].includes(me.role) && alive(target) && target !== seat));
     engine.record(seat, 'explode', target, { explode: true, target });
     return;
   }
@@ -197,10 +200,10 @@ export function submit(engine, me, cmd, actions) {
       );
       break;
     case 'hunter': {
-      check(g.phase === 'hunter' && seat === g.hunterPending && me.role === 'hunter');
+      check(g.phase === 'hunter' && seat === g.hunterPending && SHOOTER_ROLES.includes(me.role));
       const reveal = payload.reveal ?? (target !== null); // accept the previous v8 client too
       check(typeof reveal === 'boolean' && (target === null || (reveal && alive(target))));
-      data = { reveal };
+      data = { reveal, boss: me.role === 'wolfboss' };
       break;
     }
     default:

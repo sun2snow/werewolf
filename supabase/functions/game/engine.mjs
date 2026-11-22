@@ -1,17 +1,19 @@
 // One engine per locked room transaction. No DOM, database or module-level game state.
 import { civicPhase, civicScenes, speechOrder } from './civic.mjs';
-import { TURN_MS, turnClock } from './turn-clock.mjs';
+import { TURN_MS as DEFAULT_TURN_MS, turnClock } from './turn-clock.mjs';
 import '../_shared/rules.js';
 import '../_shared/modes.js';
 export const Rules = globalThis.WolfRules;
-export const { MODES } = globalThis.WOLF_MODES;
+export const { MODES, CUSTOM_ORDER, CUSTOM_LIMITS, buildCustomMode, modeFromOptions } = globalThis.WOLF_MODES;
 const DAWN_MS = 6000;
+const SHOOTER_ROLES = ['hunter', 'wolfboss'];
 
 const REASON_LABEL = {
   wolf: '（被狼人杀害）',
   poison: '（被女巫毒杀）',
   vote: '（放逐）',
   hunter: '（被猎人带走）',
+  wolfboss: '（被狼王带走）',
   duel: '（决斗出局）',
   lover: '（殉情）',
   charm: '（被狼美人带走）',
@@ -22,6 +24,8 @@ const REASON_LABEL = {
 };
 
 export function engine({ state: g, roster, mode, actions = [], clock = Date.now }) {
+  const NIGHT_MS = Number(mode.nightMs) > 0 ? Number(mode.nightMs) : DEFAULT_TURN_MS;
+  const SPEECH_MS = Number(mode.speechMs) > 0 ? Number(mode.speechMs) : DEFAULT_TURN_MS;
   const pending = [];
   const timer = turnClock(() => g, clock);
   const aliveSet = () => new Set(g.aliveSeats);
@@ -98,7 +102,9 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
       idiotRevealed: [],
       hunterPending: null,
       hunterFrom: null,
+      hunterRole: null,
       hunterUsed: false,
+      bossUsed: false,
       nightQueue: [],
       nightIndex: 0,
       votes: null,
@@ -162,7 +168,7 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
   function enterStep(step) {
     g.step = step;
     g.stepStart = clock();
-    g.deadline = g.stepStart + TURN_MS;
+    g.deadline = g.stepStart + (civicPhase(g.phase) ? SPEECH_MS : NIGHT_MS);
   }
 
   function expectedSeats(step) {
@@ -530,9 +536,15 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
   }
 
   function confirmSeats(deaths) {
-    return mode.roles.includes('hunter') && !g.hunterRevealed
-      ? deaths.filter(d => ['wolf', 'vote', 'lover', 'charm'].includes(d.reason)).map(d => d.seat)
-      : [];
+    const hunterOpen = mode.roles.includes('hunter') && !g.hunterRevealed;
+    const bossOpen = mode.roles.includes('wolfboss') && !g.bossUsed;
+    if (!hunterOpen && !bossOpen) return [];
+    const cover = hunterOpen ? ['wolf', 'vote', 'lover', 'charm'] : [];
+    const bossTrigger = ['wolf', 'vote', 'lover', 'charm', 'selfboom', 'explode', 'hunter', 'wolfboss'];
+    return deaths
+      .filter((d) => cover.includes(d.reason) ||
+        (bossOpen && rowBySeat(d.seat)?.role === 'wolfboss' && bossTrigger.includes(d.reason)))
+      .map(d => d.seat);
   }
 
   // Publish the deferred first-night deaths, then their confirmation/last words.
@@ -553,11 +565,19 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
 
   function openConfirmation(seats, when) {
     g.deathConfirmSeats = seats;
-    g.hunterPending = !g.hunterUsed ? seats.find(s => rowBySeat(s).role === 'hunter') ?? null : null;
-    if (g.hunterPending != null) g.hunterUsed = true;
+    const shooter = seats.find((seat) => {
+      const role = rowBySeat(seat)?.role;
+      if (role === 'hunter') return !g.hunterUsed;
+      if (role === 'wolfboss') return !g.bossUsed;
+      return false;
+    });
+    g.hunterPending = shooter ?? null;
+    g.hunterRole = shooter != null ? rowBySeat(shooter).role : null;
+    if (g.hunterRole === 'hunter') g.hunterUsed = true;
+    if (g.hunterRole === 'wolfboss') g.bossUsed = true;
     g.hunterFrom = when;
     g.phase = g.step = 'hunter'; // internal v8 name; the public phase is always 'settling'
-    g.deadline = clock() + TURN_MS;
+    g.deadline = clock() + (g.hunterFrom === 'night' ? NIGHT_MS : SPEECH_MS);
   }
 
   function applyDeaths(deaths, when) {
@@ -669,12 +689,12 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
     // 警长决定发言方向，但按规则最后一个发言。
     if (sheriff) g.speechOrder.push(g.speechOrder.shift());
     g.speechIndex = 0;
-    g.deadline = g.speechOrder.length ? clock() + TURN_MS : 0;
+    g.deadline = g.speechOrder.length ? clock() + SPEECH_MS : 0;
     g.log.push({
       day: g.day,
       kind: 'system',
       text: `第 ${g.day} 天讨论开始，发言顺序：${g.speechOrder.map(pad).join(' → ') || '无'}（每人 ${
-        TURN_MS / 1000
+        SPEECH_MS / 1000
       } 秒${hasBots ? '，人机不发言' : ''}）`,
     });
     if (!g.speechOrder.length) {
@@ -707,7 +727,7 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
       startVote();
       return;
     }
-    g.deadline = clock() + TURN_MS;
+    g.deadline = clock() + SPEECH_MS;
   }
 
   function handleDaySpecial(actions) {
@@ -775,7 +795,7 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
       if (!action.payload?.explode) return false;
       if (!isAliveSeat(action.seat)) return false;
       const row = rowBySeat(action.seat);
-      return row && ['wolfking', 'werewolf'].includes(row.role);
+      return row && ['wolfking', 'wolfboss', 'werewolf'].includes(row.role);
     }) || null;
   }
 
@@ -783,7 +803,9 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
     const seat = action.seat;
     const row = rowBySeat(seat);
     const isKing = row?.role === 'wolfking';
-    let target = isKing && action.payload.target != null ? Number(action.payload.target) : null;
+    const isBoss = row?.role === 'wolfboss';
+    const canTake = isKing || isBoss;
+    let target = canTake && action.payload.target != null ? Number(action.payload.target) : null;
     if (target != null && (!isAliveSeat(target) || target === seat)) target = null;
     // 自爆打断一切白天流程：剩余遗言/确认窗口作废；警上自爆则竞选作废、警徽流失。
     const duringElection = g.phase === 'sheriff';
@@ -801,10 +823,12 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
     g.log.push({
       day: g.day,
       kind: 'system',
-      text: `${isKing ? '白狼王' : '狼人'} ${pad(seat)} 号自爆${
+      text: `${isKing ? '白狼王' : isBoss ? '狼王' : '狼人'} ${pad(seat)} 号自爆${
         target != null ? `，带走 ${pad(target)} 号` : ''
       }，今天剩余流程全部跳过，立即进入黑夜`,
     });
+    // 狼王自爆即视为用掉带人机会：即使只自爆不带人，也不再补开窗口。
+    if (isBoss) g.bossUsed = true;
     const raw = [{ seat, reason: 'selfboom' }];
     if (target != null) raw.push({ seat: target, reason: 'explode' });
     const deaths = Rules.expandDeaths(raw, {
@@ -823,13 +847,13 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
   function startVote() {
     g.phase = 'vote';
     g.step = 'vote';
-    g.deadline = clock() + TURN_MS;
+    g.deadline = clock() + SPEECH_MS;
     g.votes = null;
     g.runoffSeats = null;
     g.log.push({
       day: g.day,
       kind: 'vote',
-      text: `投票开始（${TURN_MS / 1000} 秒），不能投自己，可以弃权`,
+      text: `投票开始（${SPEECH_MS / 1000} 秒），不能投自己，可以弃权`,
     });
   }
 
@@ -858,7 +882,7 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
         g.phase = 'runoff';
         g.step = 'runoff';
         g.runoffSeats = tally.top;
-        g.deadline = clock() + TURN_MS;
+        g.deadline = clock() + SPEECH_MS;
         g.log.push({
           day: g.day,
           kind: 'vote',
@@ -875,17 +899,18 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
     const targetRow = rowBySeat(target);
     g.log.push({ day: g.day, kind: 'vote', text: `${pad(target)} 号得票最多（${tally.counts[target]} 票）` });
 
-    if (targetRow?.role === 'idiot') {
+    if (targetRow && ['idiot', 'fool'].includes(targetRow.role)) {
+      const label = targetRow.role === 'fool' ? '愚者' : '白痴';
       if (!g.idiotRevealed.includes(target)) {
         g.idiotRevealed.push(target);
         g.voteBanned.push(target);
         g.log.push({
           day: g.day,
           kind: 'warning',
-          text: `${pad(target)} 号翻开白痴牌，免于放逐，之后失去投票权`,
+          text: `${pad(target)} 号翻开${label}牌，免于放逐，之后失去投票权`,
         });
       } else {
-        g.log.push({ day: g.day, kind: 'vote', text: `${pad(target)} 号白痴已翻牌，本轮无人出局` });
+        g.log.push({ day: g.day, kind: 'vote', text: `${pad(target)} 号${label}已翻牌，本轮无人出局` });
       }
       startNightInternal(false);
       return;
@@ -903,14 +928,18 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
 
   function resolveHunter(actions) {
     const seat = g.hunterPending;
+    const role = rowBySeat(seat)?.role || g.hunterRole;
+    const isBoss = role === 'wolfboss';
+    const label = isBoss ? '狼王' : '猎人';
     const row = actions.find((a) => a.seat === seat);
     const reveal = row?.payload?.reveal ?? (row?.target != null);
     const target = reveal ? row?.target : null;
     const from = g.hunterFrom || 'night';
     g.hunterPending = null;
+    g.hunterRole = null;
     g.hunterFrom = null;
     delete g.deathConfirmSeats;
-    if (reveal) g.hunterRevealed = true;
+    if (reveal && !isBoss) g.hunterRevealed = true;
 
     if (target && isAliveSeat(target)) {
       // 夜间死因不公开：夜猎开枪不播报翻牌/带走，只公布出局座位。
@@ -918,10 +947,10 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
         g.log.push({
           day: g.day,
           kind: 'death',
-          text: `${pad(seat)} 号翻开猎人牌，开枪带走 ${pad(target)} 号`,
+          text: `${pad(seat)} 号翻开${label}牌，带走 ${pad(target)} 号`,
         });
       }
-      const deaths = Rules.expandDeaths([{ seat: target, reason: 'hunter' }], {
+      const deaths = Rules.expandDeaths([{ seat: target, reason: isBoss ? 'wolfboss' : 'hunter' }], {
         alive: aliveSet(),
         lovers: g.lovers,
         wolfbeautySeat: roleSeat('wolfbeauty'),
@@ -929,12 +958,12 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
       });
       markDeaths(deaths, from === 'night' ? 'night' : 'day');
     } else if (reveal && from !== 'night') {
-      g.log.push({ day: g.day, kind: 'system', text: `${pad(seat)} 号翻开猎人牌，没有开枪` });
+      g.log.push({ day: g.day, kind: 'system', text: `${pad(seat)} 号翻开${label}牌，没有发动` });
     }
 
     const queued = g.queuedConfirmSeats;
     delete g.queuedConfirmSeats;
-    if (queued?.length && !g.hunterRevealed) {
+    if (queued?.length) {
       openConfirmation(queued, from);
       return;
     }
@@ -948,7 +977,7 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
       const { phase, step, deadline, pausedAt } = next;
       const paused = clock() - pausedAt;
       Object.assign(g, { phase, step, deadline: deadline + paused });
-      if (phase === 'night') g.stepStart = (next.stepStart ?? deadline - TURN_MS) + paused;
+      if (phase === 'night') g.stepStart = (next.stepStart ?? deadline - NIGHT_MS) + paused;
     } else if (next === 'dawn') startDawn();
     else if (next === 'day') startDay();
     else if (next === 'discussion') civic.beginDiscussion();

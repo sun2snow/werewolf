@@ -48,8 +48,8 @@ function toast(message) {
 }
 
 function roleName(r) { return ROLES[r]?.name || r; }
-function isWolf(role) { return ['werewolf', 'wolfking', 'wolfbeauty'].includes(role); }
-function canExplode(role) { return role === 'werewolf' || role === 'wolfking'; }
+function isWolf(role) { return ['werewolf', 'wolfking', 'wolfboss', 'wolfbeauty'].includes(role); }
+function canExplode(role) { return role === 'werewolf' || role === 'wolfking' || role === 'wolfboss'; }
 
 // ---------- 设置 ----------
 function fillModeOptions() {

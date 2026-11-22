@@ -1,6 +1,6 @@
 (function () {
-  const WOLF_ROLES = ['werewolf', 'wolfking', 'wolfbeauty'];
-  const GOD_ROLES = ['seer', 'witch', 'hunter', 'guard', 'idiot', 'knight', 'cupid'];
+  const WOLF_ROLES = ['werewolf', 'wolfking', 'wolfboss', 'wolfbeauty'];
+  const GOD_ROLES = ['seer', 'witch', 'hunter', 'guard', 'idiot', 'fool', 'knight', 'cupid'];
 
   function isWolfRole(role) {
     return WOLF_ROLES.includes(role);

@@ -1,6 +1,8 @@
 const NAME_KEY = 'wolf.name';
 const SESSION_KEY = 'wolf.session';
-const { ROLES, MODES, CAMPS, modeById } = window.WOLF_MODES;
+const {
+  ROLES, MODES, CAMPS, modeById, CUSTOM_ORDER, CUSTOM_LIMITS, buildCustomMode, modeFromOptions,
+} = window.WOLF_MODES;
 const Rules = window.WolfRules;
 
 const DUR = {
@@ -24,6 +26,14 @@ const DUR = {
   badge: 60000,
   lastwords: 60000,
 };
+
+function modeTimer(kind) {
+  const mode = currentMode();
+  return kind === 'night' ? (mode.nightMs || 60000) : (mode.speechMs || 60000);
+}
+function modeSeconds(kind) {
+  return Math.round(modeTimer(kind) / 1000);
+}
 
 const STEP_LABEL = {
   thief: '盗贼换牌',
@@ -52,6 +62,7 @@ const DEATH_SHORT = {
   poison: '被毒杀',
   vote: '放逐',
   hunter: '被猎人带走',
+  wolfboss: '被狼王带走',
   duel: '决斗出局',
   lover: '殉情',
   charm: '被狼美人带走',
@@ -114,6 +125,20 @@ const els = {
   modeSelect: document.querySelector('#modeSelect'),
   modeHint: document.querySelector('#modeHint'),
   createBtn: document.querySelector('#createRoom'),
+  customRoomBtn: document.querySelector('#customRoomBtn'),
+  customModal: document.querySelector('#customModal'),
+  customClose: document.querySelector('#customClose'),
+  customName: document.querySelector('#customName'),
+  customRoleList: document.querySelector('#customRoleList'),
+  customTotal: document.querySelector('#customTotal'),
+  customSkillsToggle: document.querySelector('#customSkillsToggle'),
+  customSkillList: document.querySelector('#customSkillList'),
+  customReset: document.querySelector('#customReset'),
+  customSheriff: document.querySelector('#customSheriff'),
+  customNight: document.querySelector('#customNight'),
+  customSpeech: document.querySelector('#customSpeech'),
+  customCreate: document.querySelector('#customCreate'),
+  customStatus: document.querySelector('#customStatus'),
   joinForm: document.querySelector('#joinForm'),
   joinBtn: document.querySelector('#joinForm button'),
   codeInput: document.querySelector('#roomCode'),
@@ -278,6 +303,8 @@ function setBusy(value) {
   busy = value;
   els.createBtn.disabled = value || !accountApproved();
   els.joinBtn.disabled = value || !accountApproved();
+  if (els.customRoomBtn) els.customRoomBtn.disabled = value || !accountApproved();
+  if (els.customCreate) els.customCreate.disabled = value;
 }
 
 function closeAccountMenu() {
@@ -885,7 +912,8 @@ function randomCode() {
 }
 
 function currentMode() {
-  return modeById(g?.mode || room?.options?.mode || 'std12');
+  if (room?.options) return modeFromOptions(room.options);
+  return modeById(g?.mode || 'std12');
 }
 
 function isHost() {
@@ -951,6 +979,138 @@ function fillModeSelect() {
 function updateModeHint() {
   const mode = modeById(els.modeSelect.value);
   els.modeHint.textContent = `${mode.desc} 需 ${mode.roles.length} 人。`;
+}
+
+const CUSTOM_STANDARD = (MODES.find((mode) => mode.id === 'std12') || MODES[0]).roles.slice();
+let customCounts = {};
+let customSkillsReady = false;
+
+function resetCustomCounts() {
+  customCounts = {};
+  CUSTOM_STANDARD.forEach((role) => { customCounts[role] = (customCounts[role] || 0) + 1; });
+  renderCustomRoles();
+}
+
+function customTotalCount() {
+  return Object.values(customCounts).reduce((sum, n) => sum + n, 0);
+}
+
+function renderCustomRoles() {
+  if (!els.customRoleList) return;
+  const frag = document.createDocumentFragment();
+  CUSTOM_ORDER.forEach((roleKey) => {
+    const role = ROLES[roleKey];
+    if (!role) return;
+    const row = document.createElement('div');
+    row.className = 'sr-custom-role';
+    const name = document.createElement('span');
+    name.className = 'sr-custom-role-name';
+    name.textContent = role.name;
+    const stepper = document.createElement('span');
+    stepper.className = 'sr-stepper';
+    const count = customCounts[roleKey] || 0;
+    const limit = CUSTOM_LIMITS[roleKey] || 0;
+    const minus = makeBtn('−', 'btn-outline-secondary', () => {
+      if (!customCounts[roleKey]) return;
+      customCounts[roleKey] -= 1;
+      renderCustomRoles();
+    }, count === 0);
+    minus.classList.add('sr-stepper-btn');
+    const value = document.createElement('strong');
+    value.textContent = count;
+    const plus = makeBtn('+', 'btn-outline-secondary', () => {
+      if (count >= limit || customTotalCount() >= 12) return;
+      customCounts[roleKey] = count + 1;
+      renderCustomRoles();
+    }, count >= limit || customTotalCount() >= 12);
+    plus.classList.add('sr-stepper-btn');
+    stepper.append(minus, value, plus);
+    row.append(name, stepper);
+    frag.append(row);
+  });
+  els.customRoleList.replaceChildren(frag);
+  els.customTotal.textContent = customTotalCount();
+}
+
+function renderCustomSkills() {
+  if (!els.customSkillList || customSkillsReady) return;
+  const frag = document.createDocumentFragment();
+  CUSTOM_ORDER.forEach((roleKey) => {
+    const role = ROLES[roleKey];
+    if (!role) return;
+    const item = document.createElement('div');
+    item.className = 'sr-custom-skill';
+    const name = document.createElement('strong');
+    name.textContent = role.name;
+    const text = document.createElement('span');
+    text.textContent = role.skill;
+    item.append(name, text);
+    frag.append(item);
+  });
+  els.customSkillList.replaceChildren(frag);
+  customSkillsReady = true;
+}
+
+function customConfigFromForm() {
+  const roles = [];
+  CUSTOM_ORDER.forEach((role) => {
+    for (let i = 0; i < (customCounts[role] || 0); i++) roles.push(role);
+  });
+  return buildCustomMode({
+    name: els.customName.value.trim(),
+    roles,
+    sheriff: els.customSheriff.checked,
+    nightMs: Number(els.customNight.value),
+    speechMs: Number(els.customSpeech.value),
+  });
+}
+
+function customStatus(text = '', bad = false) {
+  els.customStatus.textContent = text;
+  els.customStatus.hidden = !text;
+  els.customStatus.classList.toggle('text-danger', bad);
+  els.customStatus.classList.toggle('text-muted', !bad);
+}
+
+function openCustomModal() {
+  if (authChecking) return;
+  closeAccountMenu();
+  if (!accountApproved()) {
+    openAuthModal();
+    els.loginName.focus({ preventScroll: true });
+    return;
+  }
+  if (!customTotalCount()) resetCustomCounts();
+  renderCustomSkills();
+  customStatus('');
+  els.customModal.hidden = false;
+  els.customName.focus({ preventScroll: true });
+}
+
+function closeCustomModal() {
+  if (els.customModal) els.customModal.hidden = true;
+}
+
+async function createCustomRoom() {
+  if (busy) return;
+  if (!guardClient()) return;
+  const built = customConfigFromForm();
+  if (built.error) {
+    customStatus(built.error, true);
+    return;
+  }
+  setBusy(true);
+  customStatus('正在创建房间…');
+  els.customCreate.disabled = true;
+  try {
+    await createRoom(built.custom);
+    closeCustomModal();
+  } catch (error) {
+    customStatus(friendlyError(error), true);
+  } finally {
+    setBusy(false);
+    els.customCreate.disabled = false;
+  }
 }
 
 function enterRoom({ code, playerId, name }, firstSnapshot) {
@@ -1282,7 +1442,7 @@ function renderReplay() {
     `板子：${data.mode_name || data.mode || '未知'}`,
     `共 ${data.days || 0} 天`,
     `结束于 ${formatWhen(data.finished_at)}`,
-    data.rating?.k ? `评分 K=${data.rating.k}` : '',
+    data.rating?.unrated ? '自定义局不计分' : data.rating?.k ? `评分 K=${data.rating.k}` : '',
     `讨论 ${talkCount} 条（含狼人频道）`,
   ].filter(Boolean).join(' · ');
   renderReplayPlayers();
@@ -1339,6 +1499,9 @@ function renderReplayPlayers() {
     } else if (item) {
       ratingTd.className = `text-right ${item.delta >= 0 ? 'sr-delta-up' : 'sr-delta-down'}`;
       ratingTd.textContent = `${item.before} → ${item.after}（${item.delta >= 0 ? '+' : ''}${item.delta}）`;
+    } else if (data.rating?.unrated) {
+      ratingTd.className = 'text-right text-muted';
+      ratingTd.textContent = '不计分';
     } else {
       ratingTd.textContent = '—';
     }
@@ -1428,7 +1591,8 @@ function replayEventNode(ev) {
   } else if (ev.t === 'deathConfirm') {
     text = `${replaySeatText(ev.seat)} 确认出局`;
   } else if (ev.t === 'hunter') {
-    text = `猎人 ${replaySeatText(ev.seat)} ${ev.target ? `翻牌开枪带走 ${replaySeatText(ev.target)}` : ev.payload?.reveal === true ? '翻牌但不开枪' : ev.payload?.reveal === false ? '没有翻牌' : '没有开枪'}`;
+    const shooter = ev.payload?.boss ? '狼王' : '猎人';
+    text = `${shooter} ${replaySeatText(ev.seat)} ${ev.target ? `翻牌带走 ${replaySeatText(ev.target)}` : ev.payload?.reveal === true ? '翻牌但未发动' : ev.payload?.reveal === false ? '没有翻牌' : '没有发动'}`;
   } else if (ev.t === 'afk') {
     text = `${replaySeatText(ev.seat)} 回来了，解除挂机`;
   } else if (ev.t === 'leave') {
@@ -1567,7 +1731,9 @@ function spectatePromptText(state) {
 function renderSpectate() {
   const state = spectate?.g;
   if (!state) return;
-  const mode = modeById(state.mode || spectate.room?.options?.mode || 'std12');
+  const mode = spectate.room?.options
+    ? modeFromOptions(spectate.room.options)
+    : modeById(state.mode || 'std12');
   const total = mode.roles.length;
   els.spectateCode.textContent = spectate.code;
   els.spectatePhase.textContent = phaseTextOf(state);
@@ -1938,7 +2104,7 @@ function renderStatusPrompt(mode, inGame) {
       const seat = order[g.policeIndex];
       els.statusPrompt.textContent = seat == null
         ? '候选人发言结束，马上进入警下投票…'
-        : `候选人 ${pad(seat)} 号发言（第 ${g.policeIndex + 1} / ${order.length} 位），每人 ${Math.round(DUR.policeSpeech / 1000)} 秒。`;
+        : `候选人 ${pad(seat)} 号发言（第 ${g.policeIndex + 1} / ${order.length} 位），每人 ${modeSeconds('speech')} 秒。`;
     } else if (g.step === 'policeRunoff') {
       els.statusPrompt.textContent = `警长 PK：${(g.runoffSeats || []).map(pad).join('、')} 号平票，警下玩家请重新投票。`;
     } else {
@@ -1953,7 +2119,7 @@ function renderStatusPrompt(mode, inGame) {
   if (g.phase === 'lastwords') {
     els.statusPrompt.textContent = g.lastWordsSeat == null
       ? '遗言结束，继续…'
-      : `${pad(g.lastWordsSeat)} 号正在发表遗言（${Math.round(DUR.lastwords / 1000)} 秒）…`;
+      : `${pad(g.lastWordsSeat)} 号正在发表遗言（${modeSeconds('speech')} 秒）…`;
     return;
   }
   if (g.phase === 'badge') {
@@ -2387,7 +2553,7 @@ function renderNightPanel(seat, role) {
     return;
   }
   if (step === 'witch' && role === 'witch') {
-    els.actionArea.append(note(`女巫行动（${Math.round(DUR.witch / 1000)} 秒）：解药${g.potions.save ? '可用' : '已用'}，毒药${g.potions.poison ? '可用' : '已用'}，一晚最多用一瓶。`));
+    els.actionArea.append(note(`女巫行动（${modeSeconds('night')} 秒）：解药${g.potions.save ? '可用' : '已用'}，毒药${g.potions.poison ? '可用' : '已用'}，一晚最多用一瓶。`));
     if (g.kill != null) {
       els.actionArea.append(note(g.kill === seat
         ? `今晚 ${pad(g.kill)} 号被狼人袭击（就是你）。${g.potions.save ? '你可以用解药自救。' : '解药已用完，不能自救。'}`
@@ -2432,7 +2598,13 @@ function renderNightPanel(seat, role) {
 }
 
 function canSelfExplode(role) {
-  return role === 'werewolf' || role === 'wolfking';
+  return role === 'werewolf' || role === 'wolfking' || role === 'wolfboss';
+}
+function canExplodeTake(role) {
+  return role === 'wolfking' || role === 'wolfboss';
+}
+function roleTitle(role) {
+  return ROLES[role]?.name || '狼人';
 }
 
 function explodeStep() {
@@ -2443,8 +2615,8 @@ function renderExplodePick(seat, role) {
   if (!canSelfExplode(role) || !isAliveSeat(seat)) return false;
   const step = explodeStep();
   if (pick && pick.kind === 'explodeConfirm') {
-    els.actionArea.append(note(role === 'wolfking'
-      ? '确认白狼王自爆（不带人）：你翻牌出局，今天我不能再投票，剩余流程全部跳过，直接进入黑夜。'
+    els.actionArea.append(note(canExplodeTake(role)
+      ? `确认${roleTitle(role)}自爆（不带人）：你翻牌出局，今天我不能再投票，剩余流程全部跳过，直接进入黑夜。`
       : '确认自爆：你翻牌出局，今天我不能再投票，剩余流程全部跳过，直接进入黑夜。'));
     const wrap = document.createElement('div');
     wrap.className = 'sr-act w-100';
@@ -2459,7 +2631,7 @@ function renderExplodePick(seat, role) {
     return true;
   }
   if (pick && pick.kind === 'explode') {
-    els.actionArea.append(note('白狼王自爆带人：点击要带走的玩家，再点确认，立即进入黑夜。'));
+    els.actionArea.append(note(`${roleTitle(role)}自爆带人：点击要带走的玩家，再点确认，立即进入黑夜。`));
     els.actionArea.append(pickButtons((sel) => act(step, sel[0], { explode: true, target: sel[0] })));
     return true;
   }
@@ -2469,7 +2641,7 @@ function renderExplodePick(seat, role) {
 function appendExplodeButtons(seat, role) {
   if (!canSelfExplode(role) || !isAliveSeat(seat)) return;
   const step = explodeStep();
-  if (role === 'wolfking') {
+  if (canExplodeTake(role)) {
     els.actionArea.append(makeBtn('自爆带人', 'btn-danger', () => {
       beginPick('explode', g.aliveSeats.filter((s) => s !== seat), 1,
         (sel) => act(step, sel[0], { explode: true, target: sel[0] }));
@@ -2643,14 +2815,16 @@ function renderBadgePanel(seat) {
 }
 
 function renderHunterPanel(seat) {
+  const isBoss = myRow?.role === 'wolfboss';
+  const label = isBoss ? '狼王' : '猎人';
   if (submittedHelp('hunter')) {
     els.actionArea.append(note('已选择，等待结算…'));
     return;
   }
   if (pick && pick.kind === 'hunter') {
-    els.actionArea.append(note('请选择目标并确认翻牌，或选择「翻牌但不开枪」。确认前身份仍保密。'));
+    els.actionArea.append(note(`请选择目标并确认翻牌，或选择「翻牌但不带走」。确认前身份仍保密。`));
     els.actionArea.append(pickButtons((sel) => act('hunter', sel[0], { reveal: true })));
-    els.actionArea.append(makeBtn('翻牌但不开枪', 'btn-outline-secondary', () => {
+    els.actionArea.append(makeBtn('翻牌但不带走', 'btn-outline-secondary', () => {
       pick = null;
       act('hunter', null, { reveal: true });
     }));
@@ -2660,12 +2834,12 @@ function renderHunterPanel(seat) {
     }));
     return;
   }
-  els.actionArea.append(note('你已出局。翻牌会公开你的猎人身份并可以带走一人；不翻牌则身份保密、不开枪。'));
-  els.actionArea.append(makeBtn('翻牌（可以开枪）', 'btn-danger', () => {
+  els.actionArea.append(note(`你已出局。翻牌会公开你的${label}身份并可以带走一人；不翻牌则身份保密。`));
+  els.actionArea.append(makeBtn('翻牌（可以带走一人）', 'btn-danger', () => {
     beginPick('hunter', g.aliveSeats.slice(), 1, (sel) => act('hunter', sel[0], { reveal: true }));
     renderRoom();
   }));
-  els.actionArea.append(makeBtn('不翻牌（不开枪）', 'btn-outline-secondary', () => act('hunter', null, { reveal: false })));
+  els.actionArea.append(makeBtn('不翻牌（不发动）', 'btn-outline-secondary', () => act('hunter', null, { reveal: false })));
 }
 
 function renderMyBar() {
@@ -2782,7 +2956,9 @@ function renderGameOver() {
   const label = winner === 'wolf' ? '狼人阵营获胜' : winner === 'lovers' ? '第三方阵营获胜' : '好人阵营获胜';
   els.winnerText.className = `sr-winner ${winner === 'wolf' ? 'sr-winner-wolf' : winner === 'lovers' ? 'sr-winner-lovers' : ''}`.trim();
   els.winnerText.textContent = `${label} · ${g.winReason || ''}`;
-  els.resultNote.textContent = g.rating
+  els.resultNote.textContent = g.rating?.unrated
+    ? `共 ${g.day} 天 · 自定义房间不计入 Elo`
+    : g.rating
     ? `共 ${g.day} 天 · 评分 K=${g.rating.k} · 按昵称永久保存，零和结算`
     : `共 ${g.day} 天 · 无评分记录`;
 
@@ -2848,6 +3024,9 @@ function renderGameOver() {
     } else if (item) {
       ratingTd.className = item.delta >= 0 ? 'sr-delta-up' : 'sr-delta-down';
       ratingTd.textContent = `${item.before} → ${item.after}（${item.delta >= 0 ? '+' : ''}${item.delta}）`;
+    } else if (g.rating?.unrated) {
+      ratingTd.className = 'text-muted';
+      ratingTd.textContent = '本局不计分';
     } else {
       ratingTd.textContent = current ? `${current}（本局未结算）` : '—';
     }
@@ -2980,7 +3159,7 @@ els.createBtn.addEventListener('click', async () => {
   if (!name) return;
   setBusy(true);
   try {
-    await createRoom(name);
+    await createRoom();
   } catch (error) {
     toast(friendlyError(error));
   } finally {
@@ -3128,10 +3307,26 @@ els.replayFilters.addEventListener('click', (event) => {
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
   closeAccountMenu();
+  if (els.customModal && !els.customModal.hidden) closeCustomModal();
   if (els.authModal && !els.authModal.hidden && profile) closeAuthModal();
 });
 
 els.modeSelect.addEventListener('change', updateModeHint);
+els.customRoomBtn.addEventListener('click', openCustomModal);
+els.customClose.addEventListener('click', closeCustomModal);
+els.customModal.querySelector('[data-custom-close]').addEventListener('click', closeCustomModal);
+els.customReset.addEventListener('click', () => {
+  resetCustomCounts();
+  customStatus('');
+});
+els.customSkillsToggle.addEventListener('click', () => {
+  const show = els.customSkillList.hidden;
+  els.customSkillList.hidden = !show;
+  els.customSkillsToggle.textContent = show ? '收起角色技能' : '查看角色技能';
+});
+els.customCreate.addEventListener('click', createCustomRoom);
+els.customSheriff.addEventListener('change', () => customStatus(''));
+els.customName.addEventListener('input', () => customStatus(''));
 
 document.querySelector('#heroStart').addEventListener('click', (event) => {
   event.preventDefault();

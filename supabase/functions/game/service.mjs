@@ -1,4 +1,4 @@
-import { engine, MODES, Rules } from './engine.mjs';
+import { buildCustomMode, engine, modeFromOptions, MODES, Rules } from './engine.mjs';
 import { hostOf, project, replayEvent, requireGame as check, submit, won } from './protocol.mjs';
 
 const modeFor = (id) => MODES.find((m) => m.id === id);
@@ -18,29 +18,33 @@ export class SettlementError extends Error {
 }
 
 async function settle(q, code, g, roster, mode) {
-  // All matches acquire overlapping rating rows in the same order, including first-time players.
-  const humans = roster.filter((p) => !p.is_bot).sort((a, b) =>
-    a.name < b.name ? -1 : a.name > b.name ? 1 : 0
-  );
-  const entries = [];
-  for (const p of humans) {
-    await q('insert into public.ratings(name) values($1) on conflict(name) do nothing', [p.name]);
-    const [old] = await q('select rating,games,wins from public.ratings where name=$1 for update', [p.name]);
-    entries.push({ ...old, seat: p.seat, name: p.name, win: won(g, p) });
-  }
-  const k = roster.length <= 6 ? 32 : roster.length <= 9 ? 28 : 24;
-  const scores = Rules.computeTeamElo(entries, k);
-  for (const s of scores) {
-    const [counts] = await q(
-      `update public.ratings set rating=$2,games=games+1,wins=wins+$3,updated_at=now()
-      where name=$1 returning games,wins`,
-      [s.name, s.after, s.win ? 1 : 0],
+  if (mode.rated === false) {
+    g.rating = { unrated: true, k: 0, players: [] };
+  } else {
+    // All matches acquire overlapping rating rows in the same order, including first-time players.
+    const humans = roster.filter((p) => !p.is_bot).sort((a, b) =>
+      a.name < b.name ? -1 : a.name > b.name ? 1 : 0
     );
-    Object.assign(s, counts, {
-      votesReceived: g.voteHistory.reduce((n, v) => n + (v.counts[s.seat] || 0), 0),
-    });
+    const entries = [];
+    for (const p of humans) {
+      await q('insert into public.ratings(name) values($1) on conflict(name) do nothing', [p.name]);
+      const [old] = await q('select rating,games,wins from public.ratings where name=$1 for update', [p.name]);
+      entries.push({ ...old, seat: p.seat, name: p.name, win: won(g, p) });
+    }
+    const k = roster.length <= 6 ? 32 : roster.length <= 9 ? 28 : 24;
+    const scores = Rules.computeTeamElo(entries, k);
+    for (const s of scores) {
+      const [counts] = await q(
+        `update public.ratings set rating=$2,games=games+1,wins=wins+$3,updated_at=now()
+        where name=$1 returning games,wins`,
+        [s.name, s.after, s.win ? 1 : 0],
+      );
+      Object.assign(s, counts, {
+        votesReceived: g.voteHistory.reduce((n, v) => n + (v.counts[s.seat] || 0), 0),
+      });
+    }
+    g.rating = { k, players: scores };
   }
-  g.rating = { k, players: scores };
   const players = roster.map((p) => ({
     seat: p.seat,
     name: p.name,
@@ -85,11 +89,19 @@ export async function dispatch(q, uid, cmd) {
   check(account, '账号未通过审核');
   check(typeof code === 'string' && /^\d{6}$/.test(code), '请输入六位房间码');
   if (op === 'create') {
-    check(modeFor(cmd.mode), '未知板子');
+    let options;
+    if (cmd.mode === 'custom') {
+      const built = buildCustomMode(cmd.custom);
+      check(!built.error, built.error || '自定义配置无效');
+      options = { mode: 'custom', phase: 'waiting', custom: built.custom };
+    } else {
+      check(modeFor(cmd.mode), '未知板子');
+      options = { mode: cmd.mode, phase: 'waiting' };
+    }
     const made = await q(
       `insert into public.rooms(code,protocol,options) values($1,8,$2::text::jsonb)
       on conflict(code) do nothing returning code`,
-      [code, JSON.stringify({ mode: cmd.mode, phase: 'waiting' })],
+      [code, JSON.stringify(options)],
     );
     if (!made.length) return { collision: true };
   }
@@ -101,7 +113,7 @@ export async function dispatch(q, uid, cmd) {
   check(room, '房间不存在');
   let rows = await q(rosterSQL, [code]);
   let me = rows.find((r) => r.account_id === uid && !r.departed);
-  const mode = modeFor(room.options.mode);
+  const mode = modeFromOptions(room.options);
   check(mode, '未知板子');
   let g = room.options.g || null;
   let entry = null;
@@ -251,6 +263,7 @@ export async function dispatch(q, uid, cmd) {
   }
   if (changed || referee.pending.length) {
     const options = {
+      ...room.options,
       mode: mode.id,
       phase: !g ? 'waiting' : g.phase === 'finished' ? 'finished' : 'playing',
       g,
@@ -280,6 +293,7 @@ export async function dispatch(q, uid, cmd) {
     options: {
       mode: mode.id,
       phase: !g ? 'waiting' : g.phase === 'finished' ? 'finished' : 'playing',
+      ...(room.options.custom ? { custom: room.options.custom } : {}),
       g: pub,
     },
     members: rows.map(({ id, name, seat, alive, is_bot, online, role }) => ({

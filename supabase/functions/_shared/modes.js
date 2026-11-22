@@ -10,6 +10,11 @@
       skill: '狼人阵营，拥有狼人全部能力。白天可自爆并带走一名其他存活玩家，立即入夜；被带走者不能发动猎人技能。',
       explode: '可以（可带一人）',
     },
+    wolfboss: {
+      name: '狼王', camp: 'killer', campName: '狼人阵营',
+      skill: '狼人阵营，拥有狼人全部能力。出局时可以翻牌带走一名其他存活玩家；被毒杀、主动离房或被请离时不能发动。白天也可自爆，自爆带人时立即入夜。',
+      explode: '可以',
+    },
     wolfbeauty: {
       name: '狼美人', camp: 'killer', campName: '狼人阵营',
       skill: '狼人阵营。每晚参与狼刀后可魅惑一名其他存活玩家，不能连续两晚魅惑同一人。你出局时被魅惑者殉情（被骑士决斗出局除外）。本角色不能自爆。',
@@ -34,6 +39,10 @@
     idiot: {
       name: '白痴', camp: 'police', campName: '好人阵营 · 神职',
       skill: '好人阵营·神职。被投票放逐时翻牌免死，此后失去投票权但保留发言权，仍可能被狼刀或毒药出局。',
+    },
+    fool: {
+      name: '愚者', camp: 'police', campName: '好人阵营 · 神职',
+      skill: '好人阵营·神职。与白痴同技能：被投票放逐时翻牌免死，此后失去投票权但保留发言权，仍可能被狼刀或毒药出局。',
     },
     knight: {
       name: '骑士', camp: 'police', campName: '好人阵营 · 神职',
@@ -125,6 +134,79 @@
     },
   ];
 
+  const CUSTOM_ORDER = [
+    'werewolf', 'wolfking', 'wolfboss', 'wolfbeauty',
+    'villager', 'seer', 'witch', 'hunter', 'guard', 'fool', 'idiot', 'knight', 'cupid', 'thief',
+  ];
+  const CUSTOM_LIMITS = {
+    werewolf: 8, villager: 10, wolfking: 1, wolfboss: 1, wolfbeauty: 1,
+    seer: 1, witch: 1, hunter: 1, guard: 1, fool: 1, idiot: 1, knight: 1, cupid: 1, thief: 1,
+  };
+  const WOLF_ROLE_KEYS = ['werewolf', 'wolfking', 'wolfboss', 'wolfbeauty'];
+  const MIN_PLAYERS = 6;
+  const MAX_PLAYERS = 12;
+
+  function clampTimer(value, fallback) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(180000, Math.max(30000, Math.round(n / 5000) * 5000));
+  }
+
+  // Shared by the browser and the referee: one validator, one mode shape.
+  function buildCustomMode(input = {}) {
+    const roles = Array.isArray(input.roles) ? input.roles.filter((r) => typeof r === 'string') : [];
+    const name = String(input.name || '').trim().slice(0, 20) || '自定义局';
+    const custom = {
+      name,
+      roles: roles.slice(),
+      sheriff: input.sheriff !== false,
+      nightMs: clampTimer(input.nightMs, 60000),
+      speechMs: clampTimer(input.speechMs, 60000),
+    };
+    let error = '';
+    const counts = {};
+    if (roles.length < MIN_PLAYERS || roles.length > MAX_PLAYERS) {
+      error = `自定义局需要 ${MIN_PLAYERS}–${MAX_PLAYERS} 人`;
+    }
+    if (!error) {
+      for (const role of roles) {
+        if (!ROLES[role]) { error = '配置里有未知角色'; break; }
+        counts[role] = (counts[role] || 0) + 1;
+        const limit = CUSTOM_LIMITS[role] || 0;
+        if (counts[role] > limit) {
+          error = `${ROLES[role].name}最多 ${limit} 名`;
+          break;
+        }
+      }
+    }
+    if (!error && !roles.some((role) => WOLF_ROLE_KEYS.includes(role))) {
+      error = '至少需要 1 名狼人';
+    }
+    if (!error && !roles.some((role) => !WOLF_ROLE_KEYS.includes(role))) {
+      error = '至少需要 1 名好人角色';
+    }
+    const mode = {
+      id: 'custom',
+      name,
+      desc: `自定义局，${roles.length} 人；自定义房间不计入 Elo。`,
+      play: '人数、职业配比、上警与行动时限由房主决定，胜利条件固定为屠边。',
+      sheriff: custom.sheriff,
+      rated: false,
+      nightMs: custom.nightMs,
+      speechMs: custom.speechMs,
+      roles,
+    };
+    return { mode, custom, error };
+  }
+
+  function modeFromOptions(options) {
+    if (options && options.custom && Array.isArray(options.custom.roles)) {
+      const built = buildCustomMode(options.custom);
+      if (!built.error) return built.mode;
+    }
+    return modeById(options && options.mode);
+  }
+
   const CAMPS = {
     killer: { tag: 'sr-tag-killer', bar: 'sr-me-killer', name: '狼人阵营' },
     police: { tag: 'sr-tag-police', bar: 'sr-me-police', name: '好人阵营 · 神职' },
@@ -146,5 +228,8 @@
     return order.map((key) => `${ROLES[key].name} ×${counts[key]}`).join(' · ');
   }
 
-  globalThis.WOLF_MODES = { ROLES, MODES, CAMPS, modeById, summary };
+  globalThis.WOLF_MODES = {
+    ROLES, MODES, CAMPS, modeById, summary,
+    CUSTOM_ORDER, CUSTOM_LIMITS, buildCustomMode, modeFromOptions,
+  };
 })();

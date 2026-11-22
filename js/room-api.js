@@ -32,11 +32,12 @@ async function gameRequest(op, code, args = {}) {
   }
   return data;
 }
-async function createRoom() {
+async function createRoom(custom = null) {
   const epoch = authEpoch;
+  const base = custom ? { mode: 'custom', custom } : { mode: els.modeSelect.value };
   for (let i = 0; i < 6; i++) {
     const saved = localStorage.getItem(membershipKey());
-    const result = await gameRequest('create', randomCode(), { mode: els.modeSelect.value, includeSnapshot: true });
+    const result = await gameRequest('create', randomCode(), { ...base, includeSnapshot: true });
     if (epoch !== authEpoch) return;
     if (!result.collision) {
       enterRoom(result, localStorage.getItem(membershipKey()) === saved ? result.snapshot : null);
