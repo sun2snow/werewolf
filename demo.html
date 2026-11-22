@@ -7,10 +7,10 @@
   <link rel="icon" type="image/png" href="icon.png">
   <link rel="apple-touch-icon" href="icon.png">
   <link rel="stylesheet" href="vendor/bootstrap.min.css?v=4.6.2">
-  <link rel="stylesheet" href="styles.css?v=1.1.4">
+  <link rel="stylesheet" href="styles.css?v=1.2.0">
 </head>
 <body>
-  <nav class="navbar navbar-light bg-light mb-4">
+  <nav class="navbar navbar-light mb-4">
     <div class="container">
       <a class="navbar-brand" href="./"><img class="sr-logo" src="icon.png" alt="" width="22" height="22">狼人杀</a>
       <ul class="navbar-nav mr-auto flex-row">
@@ -24,11 +24,14 @@
   <main class="container py-3">
     <section id="setupView">
       <div class="sr-hero mb-4">
-        <h1 class="h2 mb-2">本地试玩</h1>
-        <p class="mb-3">免登录 · 单机对人机 · 不计分 · 不影响线上战绩</p>
-        <span class="sr-tag sr-tag-killer">夜晚行动</span>
-        <span class="sr-tag sr-tag-police">白天发言投票</span>
-        <span class="sr-tag sr-tag-neutral">和线上同一套裁判</span>
+        <div class="sr-hero-copy">
+          <div class="sr-eyebrow">免登录 · 单机人机 · 不计分</div>
+          <h1>本地试玩</h1>
+          <p class="sr-hero-sub mb-3">和线上同一套裁判，在自己浏览器里跑完整一局，不上传任何数据。</p>
+          <span class="sr-tag sr-tag-killer">夜晚行动</span>
+          <span class="sr-tag sr-tag-police">白天发言投票</span>
+          <span class="sr-tag sr-tag-neutral">同一套裁判</span>
+        </div>
       </div>
       <div class="card card-body">
         <div class="form-row">
@@ -41,7 +44,7 @@
             <select id="demoRole" class="form-control"></select>
           </div>
           <div class="col-md-4 mb-3 d-flex align-items-end">
-            <button id="demoStart" class="btn btn-danger btn-block" type="button">开始试玩</button>
+            <button id="demoStart" class="btn btn-dark btn-block" type="button">开始试玩</button>
           </div>
         </div>
         <p id="demoHint" class="text-muted small mb-2"></p>
