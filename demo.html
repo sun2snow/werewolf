@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>狼人杀 · 本地试玩（免登录）</title>
+  <link rel="stylesheet" href="vendor/bootstrap.min.css?v=4.6.2">
+  <link rel="stylesheet" href="styles.css?v=1.1.0">
+</head>
+<body>
+  <nav class="navbar navbar-light bg-light mb-4">
+    <div class="container">
+      <a class="navbar-brand" href="./">狼人杀</a>
+      <ul class="navbar-nav mr-auto flex-row">
+        <li class="nav-item"><a class="nav-link" href="./">在线对战</a></li>
+        <li class="nav-item"><a class="nav-link active" href="./demo.html">本地试玩</a></li>
+        <li class="nav-item"><a class="nav-link" href="./rules.html">详细规则</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main class="container py-3">
+    <section id="setupView">
+      <div class="sr-hero mb-4">
+        <h1 class="h2 mb-2">本地试玩</h1>
+        <p class="mb-3">免登录 · 单机对人机 · 不计分 · 不影响线上战绩</p>
+        <span class="sr-tag sr-tag-killer">夜晚行动</span>
+        <span class="sr-tag sr-tag-police">白天发言投票</span>
+        <span class="sr-tag sr-tag-neutral">和线上同一套裁判</span>
+      </div>
+      <div class="card card-body">
+        <div class="form-row">
+          <div class="col-md-4 mb-3">
+            <label class="small text-muted mb-1" for="demoMode">板子</label>
+            <select id="demoMode" class="form-control"></select>
+          </div>
+          <div class="col-md-4 mb-3">
+            <label class="small text-muted mb-1" for="demoRole">你的身份</label>
+            <select id="demoRole" class="form-control"></select>
+          </div>
+          <div class="col-md-4 mb-3 d-flex align-items-end">
+            <button id="demoStart" class="btn btn-danger btn-block" type="button">开始试玩</button>
+          </div>
+        </div>
+        <p id="demoHint" class="text-muted small mb-2"></p>
+        <p class="small text-muted mb-0">
+          其他座位都是人机，会自动行动、投票、发动技能，但不发言。轮到你时点座位或按钮；不确定时点「跳过本步」快进。
+          全程在你自己的浏览器里计算，刷新页面即结束，不会上传任何数据。
+        </p>
+      </div>
+    </section>
+
+    <section id="gameView" hidden>
+      <div class="d-flex flex-wrap justify-content-between align-items-center mb-2">
+        <h1 class="h3 mb-0">本地试玩 <span class="sr-code" id="demoCode">单机</span></h1>
+        <div class="mt-2 mt-sm-0">
+          <button id="demoRestart" class="btn btn-sm btn-outline-secondary" type="button">重新开始</button>
+          <a class="btn btn-sm btn-outline-danger" href="./">去在线对战</a>
+        </div>
+      </div>
+
+      <div class="alert alert-success py-2 mb-3" id="resultBar" hidden>
+        <strong id="resultText">—</strong>
+      </div>
+
+      <div class="sr-status mb-3" id="statusBar">
+        <div class="sr-status-main">
+          <span class="sr-phase" id="phaseLabel">载入中…</span>
+          <span class="sr-clock" id="gameClock"></span>
+          <span class="sr-clock" id="seatCount">–</span>
+        </div>
+        <div class="sr-prompt" id="statusPrompt"></div>
+      </div>
+
+      <div class="sr-me mb-3" id="meBar" hidden>
+        <strong id="mySeat">座位 –</strong>
+        <span id="myRoleTag" class="sr-tag">身份</span>
+        <span id="myRoleName"></span>
+        <button id="roleToggle" class="btn btn-sm btn-dark ml-auto" type="button">查看身份牌</button>
+      </div>
+
+      <div class="card mb-3 sr-rolecard" id="roleCard" hidden>
+        <div class="card-body">
+          <div class="d-flex flex-wrap align-items-center mb-2">
+            <span id="roleTag" class="sr-tag">身份</span>
+            <strong id="roleName" class="ml-2"></strong>
+          </div>
+          <p id="roleSkill" class="mb-0">—</p>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="col-lg-7">
+          <div class="card card-body mb-3">
+            <ul id="demoSeats" class="sr-seats"></ul>
+          </div>
+          <div class="card card-body">
+            <h2 class="h5 mb-2">行动</h2>
+            <div class="sr-action" id="demoAction"></div>
+            <form id="chatForm" class="input-group input-group-sm mt-3" autocomplete="off">
+              <input id="chatInput" class="form-control" maxlength="200" placeholder="现在不是你的发言时间" disabled>
+              <div class="input-group-append">
+                <button class="btn btn-outline-primary" type="submit" id="chatSend" disabled>发送</button>
+              </div>
+            </form>
+          </div>
+        </div>
+        <div class="col-lg-5">
+          <div class="card card-body">
+            <h2 class="h5 mb-2">对局记录</h2>
+            <div class="sr-feed" id="demoFeed"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="sr-footer">本地试玩 · 与在线对局共用同一套规则与判定</footer>
+  <div id="toast" class="sr-toast" role="status" hidden></div>
+  <script type="module" src="js/demo.js?v=1.0.0"></script>
+</body>
+</html>

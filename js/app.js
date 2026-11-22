@@ -123,6 +123,8 @@ const els = {
   connStatus: document.querySelector('#connStatus'),
   roomCodeLabel: document.querySelector('#roomCodeLabel'),
   copyBtn: document.querySelector('#copyCode'),
+  copyInviteBtn: document.querySelector('#copyInvite'),
+  inviteHint: document.querySelector('#inviteHint'),
   statusBar: document.querySelector('#statusBar'),
   phaseLabel: document.querySelector('#phaseLabel'),
   gameClock: document.querySelector('#gameClock'),
@@ -2996,6 +2998,19 @@ els.copyBtn.addEventListener('click', async () => {
   }
 });
 
+els.copyInviteBtn.addEventListener('click', async () => {
+  if (!session) return;
+  const url = new URL(location.href);
+  url.hash = '';
+  url.search = `?room=${encodeURIComponent(session.code)}`;
+  try {
+    await navigator.clipboard.writeText(url.toString());
+    toast('邀请链接已复制，朋友打开会自动填好房号');
+  } catch {
+    toast(`复制失败，邀请链接是 ${url.toString()}`);
+  }
+});
+
 els.revealBtn.addEventListener('click', () => {
   roleShown = !roleShown;
   renderMyBar();
@@ -3381,7 +3396,13 @@ function boot() {
 
   const params = new URLSearchParams(location.search);
   const fromUrl = params.get('room');
-  if (fromUrl && /^\d{6}$/.test(fromUrl)) els.codeInput.value = fromUrl;
+  if (fromUrl && /^\d{6}$/.test(fromUrl)) {
+    els.codeInput.value = fromUrl;
+    if (els.inviteHint) {
+      els.inviteHint.textContent = `朋友邀请你加入房间 ${fromUrl}，房号已填好；登录后点「加入房间」即可。`;
+      els.inviteHint.hidden = false;
+    }
+  }
 
   if (!client) {
     setStatus('服务器未配置 · 等待 js/config.js 填入 Supabase 地址');

@@ -9,6 +9,7 @@ const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -21,7 +22,7 @@ function assetPath(url, offline = false) {
   if (pathname.includes('\0')) throw new Error('invalid path');
   const asset = path.posix.normalize(pathname.endsWith('/') ? `${pathname}index.html` : pathname);
   if (offline && asset === '/js/config.js') return path.join(root, 'examples', 'config.js');
-  return /^\/(?:(?:index|rules)\.html|styles\.css|(?:js|vendor|supabase\/functions\/_shared)\/[\w.-]+\.(?:js|css))$/.test(asset)
+  return /^\/(?:(?:index|rules|demo)\.html|styles\.css|(?:js|vendor|supabase\/functions\/_shared)\/[\w.-]+\.(?:js|css)|supabase\/functions\/game\/[\w.-]+\.mjs)$/.test(asset)
     ? path.join(root, asset) : null;
 }
 

@@ -11,7 +11,7 @@
   <script defer src="supabase/functions/_shared/modes.js?v=1.1.0"></script>
   <script defer src="supabase/functions/_shared/rules.js?v=1.1.0"></script>
   <script defer src="js/room-api.js?v=1.1.0-perf.6"></script>
-  <script defer src="js/app.js?v=1.1.0-perf.7"></script>
+  <script defer src="js/app.js?v=1.1.0-perf.8"></script>
 </head>
 <body>
   <nav class="navbar navbar-light bg-light mb-4">
@@ -20,6 +20,7 @@
       <ul class="navbar-nav mr-auto flex-row">
         <li class="nav-item"><a class="nav-link" href="#start">开始游戏</a></li>
         <li class="nav-item"><a class="nav-link" href="#historyCard">历史对局</a></li>
+        <li class="nav-item"><a class="nav-link" href="./demo.html">本地试玩</a></li>
         <li class="nav-item"><a class="nav-link" href="./rules.html" target="_blank" rel="noopener">规则<span class="sr-only">（新标签页）</span></a></li>
         <li class="nav-item d-none d-sm-block"><a class="nav-link" href="https://github.com/legendcn/werewolf">源码</a></li>
       </ul>
@@ -46,6 +47,8 @@
         <h1 class="h2 mb-2">狼人杀</h1>
         <p class="mb-3">好友组局 · <span class="sr-tag sr-tag-killer">8 种板子</span> <span class="sr-tag sr-tag-police">夜晚行动</span> <span class="sr-tag sr-tag-neutral">第三方阵营</span> <span class="sr-tag sr-tag-civilian">Elo 评分</span></p>
         <a class="btn btn-light btn-lg" href="#start" id="heroStart">开始游戏</a>
+        <a class="btn btn-outline-light btn-lg ml-2" href="./demo.html">免登录试玩</a>
+        <p class="mt-3 mb-0 text-white-50 small" id="inviteHint" hidden></p>
       </div>
 
       <div class="card mb-4" id="activeRoomCard" hidden>
@@ -221,6 +224,7 @@
         <div class="mt-2 mt-sm-0">
           <button id="roomLobby" class="btn btn-sm btn-outline-secondary" type="button">返回大厅（保留座位）</button>
           <button id="copyCode" class="btn btn-sm btn-outline-secondary" type="button">复制房间码</button>
+          <button id="copyInvite" class="btn btn-sm btn-outline-secondary" type="button">复制邀请链接</button>
           <button id="leaveRoom" class="btn btn-sm btn-outline-danger ml-2" type="button">离开房间</button>
         </div>
       </div>
