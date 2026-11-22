@@ -6,7 +6,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 // Do not publish the repository root. The DB layering (index.ts, service.mjs) and SQL stay
 // private; only the pure referee modules needed by the offline demo are published.
 const files = [
-  '.nojekyll', 'index.html', '404.html', 'rules.html', 'demo.html', 'styles.css', 'icon.png',
+  '.nojekyll', 'index.html', '404.html', 'rules.html', 'demo.html', 'styles.css', 'icon.png', 'icon-light.png',
   'THIRD_PARTY_NOTICES.md',
   'js/config.js', 'js/room-api.js', 'js/app.js', 'js/demo.js',
   'supabase/functions/_shared/modes.js', 'supabase/functions/_shared/rules.js',

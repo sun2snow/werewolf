@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="icon.png">
   <link rel="apple-touch-icon" href="icon.png">
   <link rel="stylesheet" href="vendor/bootstrap.min.css?v=4.6.2">
-  <link rel="stylesheet" href="styles.css?v=1.1.3">
+  <link rel="stylesheet" href="styles.css?v=1.1.4">
   <script defer src="vendor/supabase.js"></script>
   <script defer src="js/config.js?v=1.1.0"></script>
   <script defer src="supabase/functions/_shared/modes.js?v=1.1.0"></script>
@@ -16,7 +16,7 @@
   <script defer src="js/app.js?v=1.1.0-perf.11"></script>
 </head>
 <body>
-  <div class="sr-intro" aria-hidden="true"><img class="sr-intro-logo" src="icon.png" alt=""></div>
+  <div class="sr-intro" id="srIntro" aria-hidden="true"><canvas class="sr-intro-canvas" id="srIntroCanvas"></canvas></div>
   <nav class="navbar navbar-light bg-light mb-4">
     <div class="container">
       <a class="navbar-brand" href="./"><img class="sr-logo" src="icon.png" alt="" width="22" height="22">狼人杀</a>
@@ -490,5 +490,109 @@
   </div>
 
   <div id="toast" class="sr-toast" role="status" hidden></div>
+  <script>
+    (function () {
+      var veil = document.getElementById('srIntro');
+      if (!veil) return;
+      if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        veil.remove();
+        return;
+      }
+      var canvas = document.getElementById('srIntroCanvas');
+      var ctx = canvas && canvas.getContext('2d');
+      var img = new Image();
+      var SIZE = 140;
+      var BOX = 360;
+      var PAD = (BOX - SIZE) / 2;
+      var DPR = Math.min(2, window.devicePixelRatio || 1);
+      var done = false;
+      function finish() {
+        if (done) return;
+        done = true;
+        veil.remove();
+      }
+      if (!ctx) { finish(); return; }
+      canvas.width = BOX * DPR;
+      canvas.height = BOX * DPR;
+
+      img.onload = function () {
+        var N = 6, CELL = SIZE / N, tris = [], verts = [];
+        for (var i = 0; i <= N; i++) {
+          verts[i] = [];
+          for (var j = 0; j <= N; j++) {
+            var edge = i === 0 || j === 0 || i === N || j === N;
+            verts[i][j] = {
+              x: PAD + i * CELL + (edge ? 0 : (Math.random() - 0.5) * CELL * 0.55),
+              y: PAD + j * CELL + (edge ? 0 : (Math.random() - 0.5) * CELL * 0.55)
+            };
+          }
+        }
+        for (var x = 0; x < N; x++) {
+          for (var y = 0; y < N; y++) {
+            var a = verts[x][y], b = verts[x + 1][y], c = verts[x + 1][y + 1], d = verts[x][y + 1];
+            if ((x + y) % 2 === 0) { tris.push([a, b, c], [a, c, d]); }
+            else { tris.push([a, b, d], [b, c, d]); }
+          }
+        }
+        for (var k = tris.length - 1; k > 0; k--) {
+          var m = Math.floor(Math.random() * (k + 1)), swap = tris[k];
+          tris[k] = tris[m]; tris[m] = swap;
+        }
+        var parts = tris.map(function (pts, idx) {
+          var cx = (pts[0].x + pts[1].x + pts[2].x) / 3;
+          var cy = (pts[0].y + pts[1].y + pts[2].y) / 3;
+          var ang = Math.random() * Math.PI * 2;
+          var dist = 90 + Math.random() * 80;
+          return {
+            pts: pts.map(function (p) {
+              return { x: cx + (p.x - cx) * 1.05, y: cy + (p.y - cy) * 1.05 };
+            }),
+            cx: cx, cy: cy,
+            dx: Math.cos(ang) * dist,
+            dy: Math.sin(ang) * dist,
+            rot: (Math.random() - 0.5) * 2.6,
+            scale: 0.5 + Math.random() * 0.45,
+            delay: 0.2 * (idx / tris.length),
+            dur: 0.6
+          };
+        });
+
+        var t0 = null;
+        function frame(now) {
+          if (done) return;
+          if (t0 === null) t0 = now;
+          var t = (now - t0) / 1000;
+          ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+          ctx.clearRect(0, 0, BOX, BOX);
+          for (var p = 0; p < parts.length; p++) {
+            var part = parts[p];
+            var g = Math.max(0, Math.min(1, (t - part.delay) / part.dur));
+            if (g <= 0) continue;
+            var e = 1 - Math.pow(1 - g, 3), back = 1 - e;
+            ctx.save();
+            ctx.translate(part.cx + part.dx * back, part.cy + part.dy * back);
+            ctx.rotate(part.rot * back);
+            var s = part.scale + (1 - part.scale) * e;
+            ctx.scale(s, s);
+            ctx.translate(-part.cx, -part.cy);
+            ctx.beginPath();
+            ctx.moveTo(part.pts[0].x, part.pts[0].y);
+            ctx.lineTo(part.pts[1].x, part.pts[1].y);
+            ctx.lineTo(part.pts[2].x, part.pts[2].y);
+            ctx.closePath();
+            ctx.clip();
+            ctx.drawImage(img, PAD, PAD, SIZE, SIZE);
+            ctx.restore();
+          }
+          if (t > 0.86) veil.style.opacity = String(Math.max(0, 1 - (t - 0.86) / 0.14));
+          if (t >= 1) { finish(); return; }
+          requestAnimationFrame(frame);
+        }
+        requestAnimationFrame(frame);
+      };
+      img.onerror = finish;
+      img.src = 'icon-light.png';
+    })();
+  </script>
 </body>
 </html>
