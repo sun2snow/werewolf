@@ -57,7 +57,7 @@ const DEATH_SHORT = {
   charm: '被狼美人带走',
   explode: '自爆带走',
   selfboom: '自爆出局',
-  kick: '被站长请离',
+  kick: '被请离',
   leave: '离开房间',
 };
 
@@ -500,10 +500,10 @@ function applyAccountUI() {
   els.pendingTitle.textContent = profile.status === 'banned' ? '账号已被封禁'
     : profile.status === 'rejected' ? '审核未通过' : '等待审核';
   els.pendingText.textContent = profile.status === 'banned'
-    ? '你的账号被站长封禁，暂时无法进入游戏。如有疑问请联系站长解封。'
+    ? '你的账号已被封禁，暂时无法进入游戏。'
     : profile.status === 'rejected'
-      ? '你的账号没有通过审核。如有疑问请联系站长。'
-      : '账号已注册成功，正在等待站长或管理员审核。通过后这里会自动解锁，也可以直接点「刷新状态」。';
+      ? '你的账号没有通过审核。'
+      : '账号已注册成功，正在等待审核。通过后这里会自动解锁，也可以直接点「刷新状态」。';
   els.pendingRefresh.hidden = profile.status !== 'pending';
 }
 
@@ -838,7 +838,7 @@ async function loadAdmin() {
       } else {
         const tip = document.createElement('span');
         tip.className = 'small text-muted';
-        tip.textContent = '已封禁（仅站长可解封）';
+        tip.textContent = '已封禁';
         actTd.append(tip);
       }
     } else {
@@ -1082,7 +1082,7 @@ function renderLeaderboard(failed = false) {
     const td = document.createElement('td');
     td.colSpan = 5;
     td.className = 'text-center text-muted py-3';
-    td.textContent = '排行榜暂不可用，请稍后重试或联系站长检查部署。';
+    td.textContent = '排行榜暂不可用，请稍后重试。';
     tr.append(td);
     frag.append(tr);
     els.leaderboardBody.replaceChildren(frag);
@@ -1324,7 +1324,7 @@ function renderReplayPlayers() {
     const deathTd = document.createElement('td');
     deathTd.className = 'text-muted';
     if (player.kicked) {
-      deathTd.textContent = '被站长请离';
+      deathTd.textContent = '被请离';
     } else if (player.death) {
       deathTd.textContent = `第 ${player.death.day} 天 · ${DEATH_SHORT[player.death.reason] || ''}`.trim();
     } else {
@@ -1435,7 +1435,7 @@ function replayEventNode(ev) {
     text = `${replaySeatText(ev.seat)} 离开了房间`;
   } else if (ev.t === 'kick') {
     cls += ' sr-ev-warn';
-    text = `站长把 ${replaySeatText(ev.target)} 请出了房间`;
+    text = `${replaySeatText(ev.target)} 被请离了房间`;
   } else {
     cls += ' sr-ev-muted';
     text = replaySeatText(ev.seat);
@@ -1858,7 +1858,7 @@ function roomSignature() {
 }
 function renderRoom() {
   if (g && myRow?.seat != null && (g.kicked || []).includes(myRow.seat)) {
-    exitRoomLocal('你已被站长请出房间');
+    exitRoomLocal('你已被请出房间');
     return;
   }
   // 状态未变不重绘：轮询多数时候快照相同，避免整片 DOM 重建带来的卡顿与滚动跳动。
@@ -2258,7 +2258,7 @@ function renderActionPanel(mode, inGame) {
         ? `等待房主开始（还差 ${missing} 人）`
         : '人齐了，等待房主点「开始游戏」'));
     }
-    if (isOwnerAccount()) els.actionArea.append(note('发牌前可在座位下方钦定身份。只有站长能看到预设；其余身份和所有座位仍然随机。'));
+    if (isOwnerAccount()) els.actionArea.append(note('发牌前可在座位下方指定身份。指定只对你自己可见；其余身份和座位随机。'));
     if (isOwnerAccount() && missing > 0) {
       els.actionArea.append(makeBtn('添加人机（占位）', 'btn-outline-primary', () => {
         addBot().catch((error) => toast(friendlyError(error)));
@@ -3300,7 +3300,7 @@ els.registerForm.addEventListener('submit', async (event) => {
     }
     localStorage.setItem(NAME_KEY, name);
     await fetchProfileAndRoute();
-    toast('注册成功，等待站长或管理员审核');
+    toast('注册成功，等待审核');
   } catch (error) {
     const reason = friendlyAuthError(error);
     setStatus(`注册失败 · ${reason}`);

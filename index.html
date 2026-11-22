@@ -4,8 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>狼人杀 · 在线版</title>
+  <link rel="icon" type="image/png" href="icon.png">
+  <link rel="apple-touch-icon" href="icon.png">
   <link rel="stylesheet" href="vendor/bootstrap.min.css?v=4.6.2">
-  <link rel="stylesheet" href="styles.css?v=1.1.0">
+  <link rel="stylesheet" href="styles.css?v=1.1.3">
   <script defer src="vendor/supabase.js"></script>
   <script defer src="js/config.js?v=1.1.0"></script>
   <script defer src="supabase/functions/_shared/modes.js?v=1.1.0"></script>
@@ -14,9 +16,10 @@
   <script defer src="js/app.js?v=1.1.0-perf.10"></script>
 </head>
 <body>
+  <div class="sr-intro" aria-hidden="true"><img class="sr-intro-logo" src="icon.png" alt=""></div>
   <nav class="navbar navbar-light bg-light mb-4">
     <div class="container">
-      <a class="navbar-brand" href="./">狼人杀</a>
+      <a class="navbar-brand" href="./"><img class="sr-logo" src="icon.png" alt="" width="22" height="22">狼人杀</a>
       <ul class="navbar-nav mr-auto flex-row">
         <li class="nav-item"><a class="nav-link" href="#start">开始游戏</a></li>
         <li class="nav-item"><a class="nav-link" href="#historyCard">历史对局</a></li>
@@ -68,7 +71,7 @@
       <div class="card mb-4" id="pendingCard" hidden>
         <div class="card-body">
           <h5 class="mb-2" id="pendingTitle">等待审核</h5>
-          <p class="mb-3" id="pendingText">账号已注册，等待站长或管理员审核。通过后会自动解锁，也可以直接刷新状态。</p>
+          <p class="mb-3" id="pendingText">账号已注册，等待审核。通过后会自动解锁，也可以直接刷新状态。</p>
           <button id="pendingRefresh" class="btn btn-sm btn-primary" type="button">刷新状态</button>
         </div>
       </div>
@@ -128,7 +131,6 @@
                 <li><strong>计时</strong>：每个行动步骤、发言、投票、PK 和猎人选择都有固定的 <strong>60 秒</strong>，时间到自动继续，不再额外加时，也没有挂机标记。掉线不是出局：夜里离线玩家的回合会等满 60 秒再跳过，白天跳过离线者的发言；回到同一账号和房间可以继续玩。</li>
                 <li>胜负按<strong>屠边</strong>：所有狼牌出局，好人获胜；神职或平民全部出局，狼人获胜。人狼情侣存活时另判第三方；同批出局的优先级见详细规则。</li>
                 <li><strong>评分</strong>：团队 Elo，初始 1500，对每位胜负相反的真人分别计算期望胜率，再取平均，同队同输赢，零和结算；6 / 9 / 12 人局 K 值分别为 32 / 28 / 24。</li>
-                <li><strong>站长特权</strong>：站长可以在座位旁「踢出」玩家，房间未满时可以「添加人机」占位（人机由程序行动、<strong>不会发言</strong>、不计分）；站长和管理员可以在右上角「账号」菜单里封禁账号，<strong>只有站长能解封</strong>，管理员不能封禁站长。</li>
                 <li><strong>旁观与回放</strong>：在首页输入房间码点「旁观对局」，可以不加入只看公开信息（白天发言、流程记录，看不到身份和狼人夜聊）；每局结束时服务端会把完整回放存进「历史对局」，<strong>包括狼人夜间讨论</strong>，审核通过的账号都能查看。</li>
               </ol>
             </div>
@@ -181,14 +183,14 @@
             <div class="table-responsive">
               <table class="table table-sm mb-0">
                 <tbody>
-                  <tr><th scope="row">账号</th><td>注册后需站长或管理员审核；密码加密保存，站长也看不到</td></tr>
+                  <tr><th scope="row">账号</th><td>注册需审核通过；密码加密保存</td></tr>
                   <tr><th scope="row">板子人数</th><td>6 / 9 / 12 人</td></tr>
                   <tr><th scope="row">房间码</th><td>6 位数字</td></tr>
                   <tr><th scope="row">房主</th><td>最早加入的在线真人可以开局、重开；判定由服务端负责。中途离开按出局处理，保留发言和投票。</td></tr>
                   <tr><th scope="row">评分</th><td>按账号永久保存，初始 1500</td></tr>
                   <tr><th scope="row">网络</th><td>大陆访问需加速器</td></tr>
                   <tr><th scope="row">掉线</th><td>离线可能跳过夜间行动和发言；未投票不计票，已投的有效票保留。掉线不算出局。</td></tr>
-                  <tr><th scope="row">人机</th><td>站长可添加，由程序行动、不会发言、不参与评分；站长可以把座位上的玩家踢出</td></tr>
+                  <tr><th scope="row">人机</th><td>房间未满可添加，由程序行动、不会发言、不参与评分</td></tr>
                   <tr><th scope="row">旁观/回放</th><td>输入房间码可旁观进行中的对局（仅公开信息）；结束后的完整回放存在「历史对局」</td></tr>
                   <tr><th scope="row">多标签</th><td>会被视为同一人，测试请用无痕窗口</td></tr>
                 </tbody>
@@ -422,7 +424,7 @@
   </main>
 
   <footer class="sr-footer container">
-    v1.1.2 · 房间独立网址 / 免登录本地试玩 / 待审核玩家提醒（站长/管理员）/ 百科校准规则与角色技能 / 八板子玩法 / 首日先竞选后公布死讯 / 首夜遗言 / 白天先遗言后开枪 / 警上自爆打断竞选 / 站长钦定身份 / 警长竞选 / 警徽移交 / 选人高亮 / 60 秒固定计时 / 猎人可选翻牌 / 提前打字 / 狼人自爆 / 站长踢人 / 封禁与解封 / 人机 / 旁观 / 历史回放 / 账号登录 / Elo · <a href="https://github.com/legendcn/werewolf">GitHub 仓库</a>
+    v1.1.3 · 狼人杀在线版 · 规则与裁判按通行玩法校准 · <a href="https://github.com/legendcn/werewolf">GitHub 仓库</a>
   </footer>
 
   <div id="authModal" class="sr-modal" hidden>
@@ -451,7 +453,7 @@
                 </div>
               </div>
               <button class="btn btn-danger" type="submit">登录</button>
-              <small class="text-muted ml-2">密码由 Supabase 加密保存，站长也看不到明文。</small>
+              <small class="text-muted ml-2">密码加密保存。</small>
             </form>
             <form id="registerForm" autocomplete="on" hidden>
               <div class="form-row">
@@ -469,7 +471,7 @@
                 </div>
               </div>
               <button class="btn btn-danger" type="submit">注册</button>
-              <small class="text-muted ml-2">注册后需站长或管理员审核通过才能游玩；站长由数据库管理员单独设置。</small>
+              <small class="text-muted ml-2">注册后需审核通过才能游玩。</small>
             </form>
           </div>
           <div id="accountBar" hidden>
