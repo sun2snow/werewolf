@@ -221,7 +221,7 @@ async function roomCommand(op, args) {
         (op === 'snapshot' && failedSettlement.op === 'snapshot'))) {
     clearSettlementRetry();
   }
-  if (data.gone) exitRoomLocal(op === 'leave' ? '已退出房间' : '你已不在该房间');
+  if (data.gone) exitRoomLocal(data.dissolved ? '房主已解散房间' : op === 'leave' ? '已退出房间' : '你已不在该房间');
   else if (unchanged) noteRoomSynced();
   else applySnapshot(data, op === 'snapshot' || (op === 'act' && ['chat', 'wolfchat'].includes(args?.step)));
 }
@@ -264,6 +264,24 @@ async function leaveRoom() {
 }
 function addBot() {
   return roomCommand('bot');
+}
+function dissolveRoom() {
+  return roomCommand('dissolve', {});
+}
+function listLiveRooms() {
+  return gameRequest('list', '');
+}
+async function matchGame(mode) {
+  const result = await gameRequest('match', '', { mode });
+  if (result.matched) {
+    const saved = localStorage.getItem(membershipKey());
+    enterRoom(result, localStorage.getItem(membershipKey()) === saved ? result.snapshot : null);
+    gameRequest('matchCancel', '', {}).catch(() => {});
+  }
+  return result;
+}
+function cancelMatch() {
+  return gameRequest('matchCancel', '', {});
 }
 async function kickMember(member) {
   kickAsked = null;

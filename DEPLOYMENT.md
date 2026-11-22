@@ -1,8 +1,8 @@
-# v8 部署与升级
+# v9 部署与升级
 
 前端仍可静态托管。Supabase Edge Function `game` 负责发牌、校验行动、统计投票、处理连带出局、驱动人机和结算对局。**数据库、函数和前端必须配套升级**：新前端不能使用旧库，旧前端也没有在新库中裁决对局的权限。
 
-1. 备份数据库，暂停注册和开房，让进行中的旧局先结束。新项目按顺序执行 `supabase/schema.sql` 和 `supabase/migration-v2.sql` 至 `migration-v8.sql`；已在 v7 的项目只执行 `supabase/migration-v8.sql`。不要在 v8 后重新执行旧权限迁移。升级会保留原有账号、评分和回放。旧房间无法可靠地把座位对应到账号，因此**不按昵称认领**。升级后请重新开房。
+1. 备份数据库，暂停注册和开房，让进行中的旧局先结束。新项目按顺序执行 `supabase/schema.sql` 和 `supabase/migration-v2.sql` 至 `migration-v9.sql`；已在 v8 的项目只执行 `supabase/migration-v9.sql`。不要在 v8 后重新执行旧权限迁移。升级会保留原有账号、评分和回放。旧房间无法可靠地把座位对应到账号，因此**不按昵称认领**。升级后请重新开房。
 2. 在仓库根目录运行 `supabase functions deploy game --project-ref <项目标识>`。函数使用服务端环境变量 `SUPABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_DB_URL`；可用 `GAME_DATABASE_URL` 覆盖数据库连接串，托管环境推荐事务连接池。服务端变量见 [.env.example](.env.example)；在函数的环境或密钥管理中配置，`npm start` 不会加载它们。该连接必须能读写游戏表（使用受信任的数据库角色，不是玩家的 JWT）。绝不要把数据库连接串或 service-role key 放到 `js/config.js` 或静态托管目录。函数会使用 Supabase Auth 验证来访者的访问令牌，并在每个事务中检查账号审核状态。
 3. 参照 [examples/config.js](examples/config.js) 设置 `js/config.js` 中自己的公开项目 URL 和客户端 key，运行 `npm run build`。**只发布生成的 `dist/` 的内容**，不要把仓库根目录当作发布目录；`dist/` 每次都会被重建，不要在其中手改文件。产物保留相对路径、第三方许可和 `.nojekyll`，可用于 GitHub Pages 项目子路径。CI 只检查，不自动发布；Pages 可使用专用发布分支的根目录承载这些静态文件。使用项目现有的用户名登录方式时，Supabase Auth 需关闭邮箱确认，因为登录邮箱是由用户名派生的内部标识。
 4. **首次设置站长**：注册目标账号，核对 Authentication 中的用户 UUID，然后在可信 SQL Editor 中执行下列语句。注册任何用户名都只会得到待审核成员身份。升级旧库时请核对已有站长身份；迁移不会擅自撤销原站长。
@@ -13,6 +13,8 @@
    ```
 
 5. 准备三个已通过审核的测试账号：用第一个开房，第二个加入，第三个旁观。对局结束后，从房间打开本局回放。查看回放和排行榜也需要账号通过审核。
+
+**从 v0.17.0 更新到 v1.5.0（含快速匹配）**：先在 Supabase 的 SQL Editor 执行 `supabase/migration-v9.sql`，创建按板子独立的 `match_queue` 表；然后重新部署 `game` 函数并发布新版静态资源。不执行该脚本时，匹配按钮会提示迁移缺失，但创建房间、观战和回放不受影响。匹配队列只允许函数使用的受信任数据库角色读写，浏览器和普通玩家没有表权限。
 
 **已有服务端 v8，更新至 v0.14.0 规则**：已执行过服务端 v8 迁移的数据库无需再跑 SQL；重新部署 `game` 函数并发布新版静态资源即可。每位玩家另有全局共用的 60 秒局时，超时由服务端扣除，解除挂机不补时。旧 v8 对局也可继续；其下一行动阶段使用新时限。
 

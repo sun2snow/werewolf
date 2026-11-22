@@ -814,3 +814,179 @@ test('unchanged snapshots skip DOM rebuilds; poll cadence adapts to recent activ
   run(`session=null;`);
   assert.equal(run('nextPollDelay()'), 3000);
 });
+
+test('rules modal lists the mode roles, flow and win conditions', async (t) => {
+  const { run, w } = await page(t);
+  const mode = MODES.find((item) => item.id === 'bloodmoon');
+  run(`openRulesModal(modeById('bloodmoon'))`);
+  assert.equal(w.document.querySelector('#rulesModal').hidden, false);
+  const text = w.document.querySelector('#rulesBody').textContent;
+  assert.match(w.document.querySelector('#rulesTitle').textContent, /血月牌局/);
+  assert.match(text, /会出现的角色与技能/);
+  assert.match(text, /狼人/);
+  assert.match(text, /胜利条件/);
+  assert.match(text, /气血与伤害/);
+  assert.match(text, /魔法骰子/);
+  assert.equal(w.document.querySelectorAll('#rulesBody .sr-rule-role').length,
+    new Set(mode.roles).size);
+  run('closeRulesModal()');
+  assert.equal(w.document.querySelector('#rulesModal').hidden, true);
+});
+
+test('room entry auto-opens rules once per room and mode, and leaving clears it', async (t) => {
+  const { run, w } = await page(t);
+  run(`profile={id:'p',status:'approved'}; session={code:'123456',playerId:'p'};
+    room={options:{mode:'newbie6'}}; rulesShownFor='';`);
+  run(`maybeShowRoomRules(modeById('newbie6'))`);
+  assert.equal(w.document.querySelector('#rulesModal').hidden, false);
+  run('closeRulesModal()');
+  run(`maybeShowRoomRules(modeById('newbie6'))`);
+  assert.equal(w.document.querySelector('#rulesModal').hidden, true);
+  run(`session={code:'654321',playerId:'p'}; maybeShowRoomRules(modeById('newbie6'))`);
+  assert.equal(w.document.querySelector('#rulesModal').hidden, false);
+  run(`closeRulesModal(); g={phase:'day'}; rulesShownFor=''; maybeShowRoomRules(modeById('newbie6'))`);
+  assert.equal(w.document.querySelector('#rulesModal').hidden, true, 'mid-game rejoin keeps the turn visible');
+  run('clearRoomViews()');
+  assert.equal(w.document.querySelector('#rulesModal').hidden, true);
+  assert.equal(run('rulesShownFor'), '');
+});
+
+test('only the host sees dissolve, and dissolving leaves the room locally', async (t) => {
+  const { run, w } = await page(t);
+  const sent = [];
+  w.ask = async (op, code) => { sent.push([op, code]); return { gone: true, dissolved: true }; };
+  run(`profile={id:'p',status:'approved'}; session={code:'123456',playerId:'p'};
+    myRow={id:'p'}; room={hostId:'p',options:{mode:'newbie6'}};
+    localStorage.setItem('wolf.session:p', JSON.stringify({code:'123456',playerId:'p'}));
+    loadLeaderboard=loadHistory=()=>{}; loadLiveRooms=startLivePolling=()=>{};
+    gameRequest=ask; els.dissolveBtn.hidden=!isHost();`);
+  assert.equal(w.document.querySelector('#dissolveRoom').hidden, false);
+  w.confirm = () => true;
+  w.document.querySelector('#dissolveRoom').click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(sent, [['dissolve', '123456']]);
+  assert.equal(run('session'), null);
+  assert.equal(w.localStorage.getItem('wolf.session:p'), null);
+  assert.equal(w.document.querySelector('#homeView').hidden, false);
+
+  run(`session={code:'123456',playerId:'q'}; room={hostId:'p'}; els.dissolveBtn.hidden=!isHost()`);
+  assert.equal(w.document.querySelector('#dissolveRoom').hidden, true);
+});
+
+test('live room list renders safe summaries and opens spectating from the card', async (t) => {
+  const { run, w } = await page(t);
+  const asked = [];
+  w.ask = async (op) => {
+    asked.push(op);
+    return { rooms: [{ code: '123456', mode: 'bloodmoon', modeName: '血月牌局', total: 9,
+      players: 9, alive: 7, phase: 'vote', day: 2, bloodmoon: true, rated: false }] };
+  };
+  w.watch = async (code) => { w.watched = code; };
+  run(`profile={id:'p',status:'approved'}; gameRequest=ask; openSpectate=watch;`);
+  await run('loadLiveRooms()');
+  assert.deepEqual(asked, ['list']);
+  assert.equal(w.document.querySelector('#liveRoomsCard').hidden, false);
+  assert.match(w.document.querySelector('#liveRooms').textContent, /123456/);
+  assert.match(w.document.querySelector('#liveRooms').textContent, /第 2 天 · 投票 · 7\/9 存活 · 9 名玩家/);
+  assert.match(w.document.querySelector('#liveRooms').textContent, /血月/);
+  assert.match(w.document.querySelector('#liveRoomsNote').textContent, /1 局进行中/);
+  const button = [...w.document.querySelectorAll('#liveRooms button')].find((b) => b.textContent === '旁观');
+  button.click();
+  assert.equal(w.watched, '123456');
+});
+
+test('matching waits for the selected board and cancellation leaves the queue', async (t) => {
+  const { run, w } = await page(t);
+  const sent = [];
+  let waiting = true;
+  w.ask = async (op, code, args) => {
+    sent.push([op, args?.mode]);
+    return waiting
+      ? { waiting: true, modeName: '9 人标准局', players: 3, need: 9, position: 3 }
+      : { waiting: true, modeName: '9 人标准局', players: 4, need: 9, position: 3 };
+  };
+  run(`profile={id:'p',status:'approved'}; gameRequest=ask;
+    els.modeSelect.value='std9';`);
+  await run('startMatch()');
+  assert.deepEqual(sent, [['match', 'std9']]);
+  assert.equal(run('matchWaiting'), true);
+  assert.match(w.document.querySelector('#matchStatus').textContent, /9 人标准局：3\/9 人/);
+  assert.equal(w.document.querySelector('#matchCancelBtn').hidden, false);
+  waiting = false;
+  await run('pollMatch()');
+  assert.match(w.document.querySelector('#matchStatus').textContent, /4\/9 人/);
+  await run('cancelMatchQueue()');
+  assert.equal(run('matchWaiting'), false);
+  assert.equal(sent.at(-1)[0], 'matchCancel');
+  assert.match(w.document.querySelector('#matchStatus').textContent, /已取消匹配/);
+});
+
+test('feed reveals new entries one at a time and jump-to-latest flushes them', async (t) => {
+  const { run, w } = await page(t);
+  run(`window.__seen=[]; window.__feed=createFeedView(document.querySelector('#feed'),
+    document.querySelector('#feedLatest'), (entry)=>window.__seen.push(entry.text));`);
+  run(`__feed.sync([], [{kind:'system',text:'第一条'},{kind:'system',text:'第二条'}], 'm:1', 640)`);
+  assert.equal(w.document.querySelectorAll('#feed .sr-sys').length, 2);
+  run(`__feed.sync([], [{kind:'system',text:'第一条'},{kind:'system',text:'第二条'},
+    {kind:'damage',text:'第三条'},{kind:'system',text:'第四条'}], 'm:1', 640)`);
+  assert.equal(w.document.querySelectorAll('#feed .sr-sys').length, 2, 'new entries are queued');
+  assert.match(w.document.querySelector('#feedLatest').textContent, /跳到最新（2）/);
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  assert.equal(w.document.querySelectorAll('#feed .sr-sys').length, 3, 'one entry revealed per tick');
+  w.document.querySelector('#feedLatest').click();
+  assert.equal(w.document.querySelectorAll('#feed .sr-sys').length, 4);
+  assert.equal(run(`__seen.join('|')`), '第三条|第四条');
+  assert.equal(w.document.querySelector('#feedLatest').textContent, '跳到最新');
+});
+
+test('bloodmoon HUD shows segmented HP, gold, stars, hand and equipment', async (t) => {
+  const { run, w } = await page(t);
+  run(`const bm={maxHp:4,hp:{1:2},gold:{1:7},star:{1:3},handCount:{1:2},
+    equipment:{1:'bagua'},skills:{1:['rijin']}};
+    document.body.append(seatBloodHud(bm,1,true));
+    renderMyBloodHud(bm,1);`);
+  const bar = w.document.querySelector('.sr-hud .sr-hpbar');
+  assert.equal(bar.querySelectorAll('.sr-hpseg').length, 4);
+  assert.equal(bar.querySelectorAll('.sr-hpseg.on').length, 2);
+  assert.equal(bar.getAttribute('aria-label'), '气血 2/4');
+  const hud = w.document.querySelector('.sr-hud');
+  assert.match(hud.textContent, /2\/4/);
+  assert.match(hud.textContent, /7/);
+  assert.match(hud.textContent, /★★★/);
+  assert.match(hud.textContent, /牌 2/);
+  assert.match(hud.textContent, /八卦阵/);
+  assert.equal(w.document.querySelector('#myBloodHud').hidden, false);
+  assert.equal(w.document.querySelector('#myBloodHud .sr-hpbar-lg').querySelectorAll('.sr-hpseg.on').length, 2);
+});
+
+test('bloodmoon feed FX derives card banners and damage floats from public log text', async (t) => {
+  const { run, w } = await page(t);
+  const seat = w.document.createElement('div');
+  seat.setAttribute('data-seat', '2');
+  seat.getBoundingClientRect = () => ({ left: 10, top: 10, width: 80, height: 40, bottom: 50 });
+  w.document.body.append(seat);
+  run(`flashBloodFx({kind:'card',text:'01 号对 02 号打出【杀】'},{blood:{}},document.body)`);
+  assert.match(w.document.querySelector('#bloodFx .sr-fx-banner').textContent, /01 号 · 【杀】/);
+  assert.match(w.document.querySelector('#bloodFx .sr-fx-banner').textContent, /目标 02 号/);
+  run(`flashBloodFx({kind:'damage',text:'02 号受到 1 点伤害'},{blood:{}},document.body)`);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(w.document.querySelector('#bloodFx .sr-fx-dmg').textContent, '-1');
+  assert.equal(w.document.querySelector('#bloodFx .sr-fx-dmg').className, 'sr-fx-dmg');
+  run(`flashBloodFx({kind:'heal',text:'02 号回复了 2 点气血'},{blood:{}},document.body)`);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(w.document.querySelector('#bloodFx .sr-fx-heal').textContent, '+2');
+});
+
+test('auth changes stop matchmaking and live polling', async (t) => {
+  const { run, w } = await page(t);
+  const cleared = [];
+  w.clearInterval = (id) => { cleared.push(id); };
+  run(`profile={id:'p',status:'approved'}; matchWaiting=true; matchTimer=11; liveTimer=22;
+    window.clearInterval=(id)=>clearedIds.push(id);`);
+  w.clearedIds = cleared;
+  run('stopMatchUi(false); stopLivePolling()');
+  assert.equal(run('matchWaiting'), false);
+  assert.equal(run('matchTimer'), null);
+  assert.equal(run('liveTimer'), null);
+  assert.deepEqual([...cleared], [11, 22]);
+});

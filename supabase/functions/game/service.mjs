@@ -78,15 +78,172 @@ async function settle(q, code, g, roster, mode) {
   g.replayId = String(replay.id);
 }
 
+const MATCH_WAIT_SECONDS = 35;
+const MATCH_MEMORY_MINUTES = 10;
+
+async function liveRooms(q) {
+  const rows = await q(
+    `select r.code,r.options,r.created_at,
+      (select count(*) from public.players p where p.room_code=r.code and not p.departed)::int as players,
+      (select count(*) from public.players p where p.room_code=r.code and not p.departed and p.alive)::int as alive
+    from public.rooms r
+    where r.protocol=8 and r.options->>'phase'='playing'
+    order by r.created_at desc limit 30`,
+  );
+  return {
+    rooms: rows.map((row) => {
+      const mode = modeFromOptions(row.options);
+      if (!mode || !row.options?.g) return null;
+      const g = row.options.g;
+      return {
+        code: row.code,
+        mode: mode.id,
+        modeName: mode.name,
+        rated: mode.rated !== false,
+        total: mode.roles.length,
+        players: row.players,
+        alive: row.alive,
+        day: g.day,
+        phase: g.phase,
+        step: g.step,
+        bloodmoon: Boolean(g.blood),
+        createdAt: row.created_at,
+      };
+    }).filter(Boolean),
+  };
+}
+
+// One queue per account. A 35-second heartbeat lets abandoned tabs expire
+// without leaving ghost players in the next match.
+async function matchmaking(q, uid, account, cmd) {
+  const [table] = await q(`select to_regclass('public.match_queue') as name`);
+  if (!table?.name) {
+    check(cmd.op === 'matchCancel', '匹配功能尚未启用：请先在 Supabase SQL Editor 执行 migration-v9.sql');
+    return { cancelled: true };
+  }
+  if (cmd.op === 'matchCancel') {
+    await q('delete from public.match_queue where account_id=$1', [uid]);
+    return { cancelled: true };
+  }
+  const mode = modeFor(cmd.mode);
+  check(mode, '未知板子');
+  const [existing] = await q('select * from public.match_queue where account_id=$1', [uid]);
+  if (existing?.room_code) {
+    const fresh = existing.matched_at && Date.now() - new Date(existing.matched_at).getTime() <
+      MATCH_MEMORY_MINUTES * 60000;
+    if (fresh) {
+      const restored = await dispatch(q, uid, {
+        op: 'restore',
+        code: existing.room_code,
+        accountId: uid,
+        includeSnapshot: true,
+      });
+      if (!restored.gone) return { matched: true, ...restored };
+    }
+    await q('delete from public.match_queue where account_id=$1', [uid]);
+  }
+  const [active] = await q(
+    'select room_code from public.players where account_id=$1 and not departed limit 1',
+    [uid],
+  );
+  check(!active, '你已在其他房间中，请先离开房间再匹配');
+  await q(`select pg_advisory_xact_lock(hashtext($1))`, [`match:${mode.id}`]);
+  await q(
+    `delete from public.match_queue where mode=$1 and room_code is null
+      and last_seen < clock_timestamp()-interval '${MATCH_WAIT_SECONDS} seconds'`,
+    [mode.id],
+  );
+  await q(
+    `insert into public.match_queue(account_id,mode) values($1,$2)
+      on conflict(account_id) do update set
+        mode=excluded.mode,
+        joined_at=case when match_queue.mode=excluded.mode then match_queue.joined_at else now() end,
+        last_seen=clock_timestamp(), room_code=null, player_id=null, matched_at=null`,
+    [uid, mode.id],
+  );
+  const waiting = await q(
+    `select m.account_id,m.joined_at,p.username
+      from public.match_queue m join public.profiles p on p.id=m.account_id
+      where m.mode=$1 and m.room_code is null
+        and m.last_seen > clock_timestamp()-interval '${MATCH_WAIT_SECONDS} seconds'
+        and p.status='approved'
+      order by m.joined_at,m.account_id for update of m`,
+    [mode.id],
+  );
+  const need = mode.roles.length;
+  const position = waiting.findIndex((row) => row.account_id === uid);
+  if (waiting.length < need || position < 0 || position >= need) {
+    return {
+      waiting: true,
+      mode: mode.id,
+      modeName: mode.name,
+      players: waiting.length,
+      need,
+      position: Math.max(1, position + 1),
+    };
+  }
+  const group = waiting.slice(0, need);
+  let code = null;
+  for (let i = 0; i < 30 && !code; i++) {
+    const candidate = String(100000 + Math.floor(Math.random() * 900000));
+    const made = await q(
+      `insert into public.rooms(code,protocol,options) values($1,8,$2::text::jsonb)
+        on conflict(code) do nothing returning code`,
+      [candidate, JSON.stringify({ mode: mode.id, phase: 'waiting', matched: true })],
+    );
+    if (made.length) code = made[0].code;
+  }
+  check(code, '匹配房间创建失败，请重试');
+  const playerIds = new Map();
+  for (const row of group) {
+    const [player] = await q(
+      'insert into public.players(room_code,account_id,name) values($1,$2,$3) returning id',
+      [code, row.account_id, row.username],
+    );
+    playerIds.set(row.account_id, player.id);
+  }
+  const roster = await q(rosterSQL, [code]);
+  const referee = engine({ state: null, roster, mode, actions: [] });
+  referee.start();
+  const g = referee.state;
+  await q(
+    `update public.players as p set role=v.role,seat=v.seat,alive=v.alive
+      from jsonb_to_recordset($2::text::jsonb) as v(id uuid,role text,seat int,alive boolean)
+      where p.room_code=$1 and p.id=v.id`,
+    [code, JSON.stringify(roster.map(({ id, role, seat, alive }) => ({ id, role, seat, alive })))],
+  );
+  await q(
+    'update public.rooms set options=$2::text::jsonb,revision=revision+1 where code=$1',
+    [code, JSON.stringify({ mode: mode.id, phase: 'playing', matched: true, g })],
+  );
+  for (const row of group) {
+    await q(
+      `update public.match_queue set room_code=$2,player_id=$3,matched_at=now(),last_seen=clock_timestamp()
+        where account_id=$1`,
+      [row.account_id, code, playerIds.get(row.account_id)],
+    );
+  }
+  const restored = await dispatch(q, uid, {
+    op: 'restore',
+    code,
+    accountId: uid,
+    includeSnapshot: true,
+  });
+  return { matched: true, ...restored };
+}
+
 // q executes on ONE transaction/connection. The caller commits only after this
 // returns; any read, scoring, replay or snapshot error rolls everything back.
 export async function dispatch(q, uid, cmd) {
-  const { op, code } = cmd;
+  const { op } = cmd;
+  let { code } = cmd;
   check(cmd.accountId === uid, '登录账号已变化，请刷新');
   const [account] = await q(`select username,role from public.profiles where id=$1 and status='approved'`, [
     uid,
   ]);
   check(account, '账号未通过审核');
+  if (op === 'list') return liveRooms(q);
+  if (op === 'match' || op === 'matchCancel') return matchmaking(q, uid, account, cmd);
   check(typeof code === 'string' && /^\d{6}$/.test(code), '请输入六位房间码');
   if (op === 'create') {
     let options;
@@ -117,6 +274,12 @@ export async function dispatch(q, uid, cmd) {
   check(mode, '未知板子');
   let g = room.options.g || null;
   let entry = null;
+  if (op === 'dissolve') {
+    check(me, '你不是房间成员');
+    check(hostOf(rows) === me.id, '仅房主可以解散房间');
+    await q('delete from public.rooms where code=$1', [code]);
+    return { gone: true, dissolved: true };
+  }
   if (op === 'join' || op === 'create') {
     if (!me) {
       check(!g, '本局已开始');

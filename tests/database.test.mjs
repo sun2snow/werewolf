@@ -11,7 +11,7 @@ import { dispatch, SettlementError } from '../supabase/functions/game/service.mj
 import { snapshotResponse } from '../supabase/functions/game/snapshot-response.mjs';
 
 // A disposable PostgreSQL cluster, not the URL in js/config.js. Run as a non-root user.
-test('v8 migration and concurrent game transactions', async (t) => {
+test('v9 migration, concurrent games, dissolve and per-board matchmaking', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'werewolf-test-'));
   const sock = createServer();
   await new Promise((r) => sock.listen(0, '127.0.0.1', r));
@@ -43,7 +43,7 @@ test('v8 migration and concurrent game transactions', async (t) => {
     alter default privileges in schema public grant all on tables to authenticated,anon;`);
   const migration = await db.reserve();
   try {
-    for (const file of ['schema.sql', ...Array.from({ length: 7 }, (_, i) => `migration-v${i + 2}.sql`)]) {
+    for (const file of ['schema.sql', ...Array.from({ length: 8 }, (_, i) => `migration-v${i + 2}.sql`)]) {
       if (file === 'migration-v8.sql') {
         // Simulate the v0.15 repair scenario: the v7 table exists but its read policy is missing.
         await migration.unsafe('drop policy "replays readable" on public.replays; revoke select on public.replays from authenticated');
@@ -195,6 +195,11 @@ test('v8 migration and concurrent game transactions', async (t) => {
   assert.ok(!('appointments' in await call(ids[1], 'snapshot')));
   const matchId = opened.options.g.matchId;
   assert.ok(matchId);
+  const live = await call(ids[1], 'list');
+  assert.deepEqual(
+    (({ code: c, mode, total, players, phase }) => ({ code: c, mode, total, players, phase }))(live.rooms[0]),
+    { code, mode: 'newbie6', total: 6, players: 6, phase: 'night' },
+  );
   let view = await call(outsider, 'spectate');
   assert.equal(view.options.g.step, 'night');
   assert.equal(view.options.g.teams, undefined);
@@ -336,4 +341,25 @@ test('v8 migration and concurrent game transactions', async (t) => {
   assert.ok(kicked.options.g.kicked.includes(target.seat));
   assert.equal(next.options.g.replayId, undefined);
   assert.ok(next.revision > lobby.revision);
+  const hostUid = [...memberships].find(([, id]) => id === owner.hostId)?.[0];
+  assert.ok(hostUid);
+  await assert.rejects(call(outsider, 'dissolve'), /成员/);
+  assert.deepEqual(await call(hostUid, 'dissolve'), { gone: true, dissolved: true });
+  assert.equal((await call(outsider, 'spectate')).gone, true);
+  const lobbyPlayers = ids.slice(0, 6);
+  const firstWave = await Promise.all(lobbyPlayers.map((id) => call(id, 'match', { mode: 'newbie6' })));
+  assert.equal(firstWave.filter((r) => r.matched).length, 1);
+  const group = await Promise.all(lobbyPlayers.map((id) => call(id, 'match', { mode: 'newbie6' })));
+  assert.ok(group.every((r) => r.matched && r.snapshot.options.g.phase === 'night'));
+  assert.equal(new Set(group.map((r) => r.code)).size, 1);
+  const matchedCode = group[0].code;
+  const queues = await db`select mode,room_code from match_queue`;
+  assert.equal(queues.length, 6);
+  assert.ok(queues.every((q) => q.mode === 'newbie6' && q.room_code === matchedCode));
+  const listed = await call(ids[6], 'list');
+  assert.equal(listed.rooms[0].code, matchedCode);
+  assert.equal(listed.rooms[0].players, 6);
+  await Promise.all(lobbyPlayers.map((id) => call(id, 'matchCancel')));
+  assert.equal((await db`select count(*) n from match_queue`)[0].n, '0');
+  await assert.rejects(call(ids[6], 'match', { mode: 'nope' }), /未知板子/);
 });

@@ -118,6 +118,13 @@ const els = {
   adminBody: document.querySelector('#adminBody'),
   adminRefresh: document.querySelector('#adminRefresh'),
   startCard: document.querySelector('#start'),
+  matchBtn: document.querySelector('#matchBtn'),
+  matchCancelBtn: document.querySelector('#matchCancelBtn'),
+  matchStatus: document.querySelector('#matchStatus'),
+  liveRoomsCard: document.querySelector('#liveRoomsCard'),
+  liveRooms: document.querySelector('#liveRooms'),
+  liveRoomsNote: document.querySelector('#liveRoomsNote'),
+  liveRoomsRefresh: document.querySelector('#liveRoomsRefresh'),
   leaderboardCard: document.querySelector('#leaderboard'),
   historyCard: document.querySelector('#historyCard'),
   historyBody: document.querySelector('#historyBody'),
@@ -161,6 +168,7 @@ const els = {
   modeLabel: document.querySelector('#modeLabel'),
   myBar: document.querySelector('#myBar'),
   mySeat: document.querySelector('#mySeat'),
+  myBloodHud: document.querySelector('#myBloodHud'),
   revealBtn: document.querySelector('#revealBtn'),
   roleCard: document.querySelector('#roleCard'),
   roleTag: document.querySelector('#roleTag'),
@@ -172,6 +180,9 @@ const els = {
   playerList: document.querySelector('#playerList'),
   actionArea: document.querySelector('#actionArea'),
   feed: document.querySelector('#feed'),
+  feedLatest: document.querySelector('#feedLatest'),
+  roomRules: document.querySelector('#roomRules'),
+  dissolveBtn: document.querySelector('#dissolveRoom'),
   chatCard: document.querySelector('#chatCard'),
   chatTitle: document.querySelector('#chatTitle'),
   chatFeed: document.querySelector('#chatFeed'),
@@ -204,6 +215,8 @@ const els = {
   spectateSeats: document.querySelector('#spectateSeats'),
   spectateChat: document.querySelector('#spectateChat'),
   spectateFeed: document.querySelector('#spectateFeed'),
+  spectateFeedLatest: document.querySelector('#spectateFeedLatest'),
+  spectateRules: document.querySelector('#spectateRules'),
   replayView: document.querySelector('#replayView'),
   replayCode: document.querySelector('#replayCode'),
   replayBack: document.querySelector('#replayBack'),
@@ -213,6 +226,11 @@ const els = {
   replayTimeline: document.querySelector('#replayTimeline'),
   replayLog: document.querySelector('#replayLog'),
   replayFilters: document.querySelector('#replayFilters'),
+  rulesModal: document.querySelector('#rulesModal'),
+  rulesTitle: document.querySelector('#rulesTitle'),
+  rulesBody: document.querySelector('#rulesBody'),
+  rulesClose: document.querySelector('#rulesClose'),
+  bloodFx: document.querySelector('#bloodFx'),
   toast: document.querySelector('#toast'),
 };
 
@@ -255,6 +273,15 @@ let preSpeech = { day: 0, msgs: [] };
 let preFlushing = false;
 let phaseKey = '';
 let feedSeeded = false;
+let roomFeed = null;
+let spectateFeedView = null;
+let liveRequest = null;
+let liveTimer = null;
+let matchTimer = null;
+let matchMode = '';
+let matchWaiting = false;
+let rulesShownFor = '';
+let rulesModeId = '';
 let profile = null;
 let authBusy = false;
 let authChecking = Boolean(client);
@@ -309,6 +336,7 @@ function setBusy(value) {
   els.createBtn.disabled = value || !accountApproved();
   els.joinBtn.disabled = value || !accountApproved();
   if (els.customRoomBtn) els.customRoomBtn.disabled = value || !accountApproved();
+  if (els.matchBtn) els.matchBtn.disabled = value || !accountApproved() || matchWaiting;
   if (els.customCreate) els.customCreate.disabled = value;
 }
 
@@ -343,6 +371,8 @@ function syncUrl(url) {
 
 function showRoom() {
   endSpectate();
+  stopLivePolling();
+  if (matchWaiting) stopMatchUi(false);
   els.homeView.hidden = true;
   els.roomView.hidden = false;
   els.spectateView.hidden = true;
@@ -357,6 +387,7 @@ function showHome() {
   els.spectateView.hidden = true;
   els.replayView.hidden = true;
   endSpectate();
+  roomFeed?.reset();
   closeAccountMenu();
   if (session || (pendingInviteCode === null && /\/games\/\d{6}\/?$/.test(location.pathname))) {
     syncUrl(siteBase());
@@ -365,6 +396,10 @@ function showHome() {
   if (client && accountApproved()) {
     loadLeaderboard();
     loadHistory();
+    loadLiveRooms();
+    startLivePolling();
+  } else {
+    stopLivePolling();
   }
 }
 
@@ -373,6 +408,9 @@ function updateHomeRoomCard() {
   const approved = accountApproved();
   els.startCard.hidden = !approved || inRoom;
   els.activeRoomCard.hidden = !(approved && inRoom);
+  els.liveRoomsCard.hidden = !approved;
+  els.matchBtn.disabled = !approved || matchWaiting;
+  els.modeSelect.disabled = matchWaiting;
   els.heroStart.textContent = inRoom ? '返回当前对局' : '开始游戏';
   const navStart = document.querySelector('.navbar a[href="#start"]');
   if (navStart) navStart.textContent = inRoom ? '当前对局' : '开始游戏';
@@ -381,6 +419,206 @@ function updateHomeRoomCard() {
   els.activeRoomNote.textContent = isHost()
     ? '你是房主。对局由服务端判定，点「返回对局」可继续。'
     : '对局还在进行，审核完点「返回对局」即可继续。';
+}
+
+// ---------- 快速匹配（每个板子独立队列） ----------
+let matchStartedAt = 0;
+let matchPolling = false;
+
+function setMatchStatus(text, tone = '', dot = false) {
+  if (!els.matchStatus) return;
+  els.matchStatus.hidden = !text;
+  els.matchStatus.className = `sr-match-status${tone ? ` sr-match-${tone}` : ''}`;
+  if (!text) return;
+  els.matchStatus.replaceChildren();
+  if (dot) {
+    const mark = document.createElement('span');
+    mark.className = 'sr-match-dot';
+    els.matchStatus.append(mark);
+  }
+  els.matchStatus.append(document.createTextNode(text));
+}
+
+function waitingText(result) {
+  const secs = Math.max(1, Math.round((Date.now() - matchStartedAt) / 1000));
+  const time = secs < 60 ? `${secs} 秒` : `${Math.floor(secs / 60)} 分 ${secs % 60} 秒`;
+  return `${result.modeName || '匹配'}：${result.players}/${result.need} 人 · 你是第 ${result.position} 位 · 已等待 ${time}`;
+}
+
+async function pollMatch() {
+  if (!matchWaiting || matchPolling) return;
+  matchPolling = true;
+  try {
+    const result = await matchGame(matchMode);
+    if (!matchWaiting) return;
+    if (result.matched) {
+      stopMatchUi(false);
+      return;
+    }
+    if (result.waiting) setMatchStatus(waitingText(result), 'on', true);
+  } catch (error) {
+    if (!matchWaiting) return;
+    const message = friendlyError(error);
+    setMatchStatus(`匹配失败：${message}`, 'error');
+    if (/migration-v9|未知板子|已在其他房间|未通过审核/.test(message)) stopMatchUi(false);
+  } finally {
+    matchPolling = false;
+  }
+}
+
+async function startMatch() {
+  if (busy || matchWaiting) return;
+  if (!guardClient()) return;
+  if (!accountApproved()) {
+    toast('先登录并等待账号审核通过');
+    openAuthModal();
+    return;
+  }
+  const mode = modeById(els.modeSelect.value);
+  if (!mode || !MODES.some((item) => item.id === mode.id)) {
+    toast('当前板子不支持匹配，请选择固定板子');
+    return;
+  }
+  matchMode = mode.id;
+  matchStartedAt = Date.now();
+  matchWaiting = true;
+  setBusy(true);
+  els.matchBtn.disabled = true;
+  els.matchCancelBtn.hidden = false;
+  els.modeSelect.disabled = true;
+  setMatchStatus(`正在加入「${mode.name}」队列…`, 'on', true);
+  clearInterval(matchTimer);
+  matchTimer = setInterval(pollMatch, 2500);
+  await pollMatch();
+}
+
+function stopMatchUi(cancelRemote = true) {
+  const wasWaiting = matchWaiting;
+  matchWaiting = false;
+  matchPolling = false;
+  clearInterval(matchTimer);
+  matchTimer = null;
+  setBusy(false);
+  els.modeSelect.disabled = false;
+  els.matchBtn.disabled = !accountApproved();
+  els.matchCancelBtn.hidden = true;
+  if (cancelRemote && wasWaiting) cancelMatch().catch(() => {});
+}
+
+async function cancelMatchQueue() {
+  if (!matchWaiting) return;
+  stopMatchUi(false);
+  setMatchStatus('已取消匹配', '');
+  try {
+    await cancelMatch();
+  } catch (error) {
+    toast(friendlyError(error));
+  }
+}
+
+// ---------- 进行中的对局 ----------
+function phaseShort(row) {
+  if (row.phase === 'finished') return '已结束';
+  if (row.phase === 'night') return '夜晚';
+  if (row.phase === 'vote' || row.phase === 'runoff') return '投票';
+  if (row.phase === 'shop') return '商店';
+  if (row.phase === 'rescue') return '濒死';
+  if (row.phase === 'dawn') return '天亮';
+  if (row.phase === 'sheriff') return '竞选';
+  if (row.phase === 'lastwords') return '遗言';
+  if (row.phase === 'day') return '讨论';
+  return '进行中';
+}
+
+function renderLiveRooms(rows = []) {
+  if (!els.liveRooms) return;
+  if (!rows.length) {
+    const empty = document.createElement('div');
+    empty.className = 'text-muted small text-center py-3';
+    empty.textContent = '现在没有进行中的对局，开一局等朋友来吧。';
+    els.liveRooms.replaceChildren(empty);
+    return;
+  }
+  const frag = document.createDocumentFragment();
+  rows.forEach((row) => {
+    const card = document.createElement('div');
+    card.className = 'sr-live-room';
+    const main = document.createElement('div');
+    main.className = 'sr-live-main';
+    const title = document.createElement('div');
+    title.className = 'sr-live-title';
+    const code = document.createElement('span');
+    code.className = 'sr-live-code';
+    code.textContent = row.code;
+    const name = document.createElement('strong');
+    name.textContent = row.modeName || '自定义局';
+    title.append(code, name);
+    if (row.bloodmoon) {
+      const tag = document.createElement('span');
+      tag.className = 'sr-live-badge sr-live-blood';
+      tag.textContent = '血月';
+      title.append(tag);
+    }
+    if (row.rated === false) {
+      const tag = document.createElement('span');
+      tag.className = 'sr-live-badge sr-live-unrated';
+      tag.textContent = '不计分';
+      title.append(tag);
+    }
+    const meta = document.createElement('div');
+    meta.className = 'sr-live-meta';
+    meta.textContent = `第 ${row.day || 1} 天 · ${phaseShort(row)} · ${row.alive}/${row.total} 存活 · ${row.players} 名玩家`;
+    main.append(title, meta);
+    const actions = document.createElement('div');
+    actions.className = 'sr-live-actions';
+    actions.append(makeBtn('旁观', 'btn-outline-dark', () => {
+      openSpectate(row.code).catch((error) => toast(friendlyError(error)));
+    }));
+    card.append(main, actions);
+    frag.append(card);
+  });
+  els.liveRooms.replaceChildren(frag);
+}
+
+async function loadLiveRooms() {
+  if (!client || !accountApproved() || liveRequest) return;
+  const request = liveRequest = {};
+  els.liveRoomsCard.hidden = false;
+  if (!els.liveRooms.childElementCount) {
+    els.liveRoomsNote.textContent = '加载中…';
+  }
+  try {
+    const data = await listLiveRooms();
+    if (request !== liveRequest) return;
+    renderLiveRooms(data.rooms || []);
+    els.liveRoomsNote.textContent = `${(data.rooms || []).length} 局进行中 · 15 秒刷新`;
+  } catch (error) {
+    if (request !== liveRequest) return;
+    els.liveRoomsNote.textContent = '列表暂不可用';
+    const box = document.createElement('div');
+    box.className = 'text-danger small text-center py-3';
+    box.textContent = friendlyError(error);
+    els.liveRooms.replaceChildren(box);
+  } finally {
+    if (request === liveRequest) liveRequest = null;
+  }
+}
+
+function startLivePolling() {
+  stopLivePolling();
+  if (!client || !accountApproved()) return;
+  liveTimer = setInterval(() => {
+    if (els.homeView.hidden || document.hidden) return;
+    loadLiveRooms();
+  }, 15000);
+}
+
+function stopLivePolling() {
+  liveRequest = null;
+  if (liveTimer) {
+    clearInterval(liveTimer);
+    liveTimer = null;
+  }
 }
 
 function backToRoom() {
@@ -566,6 +804,8 @@ function clearRoomViews() {
   members = []; localFeed = []; chatRows = []; wolfChatRows = []; wolfPicks = [];
   submitted.clear(); ratings.clear(); ratingsKey = ''; phaseKey = '';
   feedSeeded = roleShown = preFlushing = false;
+  rulesShownFor = '';
+  closeRulesModal();
   resetRoomView();
   els.chatInput.value = '';
   els.roleCard.className = 'card'; els.myBar.className = ''; els.roleTag.className = 'badge';
@@ -580,6 +820,8 @@ function clearRoomViews() {
 function showAuthScreen(note = '') {
   authChecking = false;
   authUserId = null;
+  if (matchWaiting) stopMatchUi(false);
+  stopLivePolling();
   clearAuthViews();
   applyAccountUI();
   setStatus(note || '请登录或注册');
@@ -1142,6 +1384,7 @@ function enterRoom({ code, playerId, name }, firstSnapshot) {
   loadPreSpeech();
   phaseKey = '';
   feedSeeded = false;
+  rulesShownFor = '';
   resetRoomView();
   showRoom();
   updateHomeRoomCard();
@@ -1170,6 +1413,8 @@ function resetRoomView() {
   els.modeInfo.replaceChildren();
   els.chatFeed.replaceChildren();
   els.statusBar.classList.remove('sr-night');
+  els.bloodFx.replaceChildren();
+  roomFeed?.reset();
   renderFeed();
 }
 
@@ -1406,6 +1651,7 @@ function showReplayView() {
   els.roomView.hidden = true;
   els.spectateView.hidden = true;
   els.replayView.hidden = false;
+  stopLivePolling();
   closeAccountMenu();
   window.scrollTo(0, 0);
 }
@@ -1698,6 +1944,7 @@ function stopSpectate() {
 function endSpectate() {
   stopSpectate();
   spectate = null;
+  spectateFeedView?.reset();
   setSpectateNote('');
 }
 
@@ -1710,6 +1957,7 @@ function showSpectateView() {
   els.roomView.hidden = true;
   els.replayView.hidden = true;
   els.spectateView.hidden = false;
+  stopLivePolling();
   closeAccountMenu();
   window.scrollTo(0, 0);
 }
@@ -1768,6 +2016,7 @@ function renderSpectateSeats(state, mode) {
     const member = bySeat.get(seat);
     const li = document.createElement('li');
     li.className = 'sr-seat';
+    li.dataset.seat = String(seat);
     const head = document.createElement('div');
     head.className = 'sr-seat-head';
     const num = document.createElement('span');
@@ -1814,8 +2063,12 @@ function renderSpectateSeats(state, mode) {
       }
     }
     li.append(head, avatar, name, marks);
+    if (member && state.blood?.hp?.[seat] != null) {
+      li.append(seatBloodHud(state.blood, seat, alive.has(seat)));
+    }
     frag.append(li);
   }
+  els.spectateSeats.dataset.cols = total <= 9 ? '3' : '4';
   els.spectateSeats.replaceChildren(frag);
 }
 
@@ -1843,17 +2096,210 @@ function renderSpectateChat() {
   els.spectateChat.scrollTop = els.spectateChat.scrollHeight;
 }
 
+function feedKey(entry) {
+  return `${entry?.kind || 'system'}\u0000${entry?.text || ''}`;
+}
+
+function createFeedView(el, jumpBtn, onReveal) {
+  let refKeys = [];
+  let visible = [];
+  let pending = [];
+  let timer = null;
+  let key = '';
+  let delay = 650;
+  const animated = new WeakSet();
+
+  const nearBottom = () => el.scrollHeight - el.scrollTop - el.clientHeight < 42;
+
+  function updateJump() {
+    if (!jumpBtn) return;
+    const count = pending.length;
+    jumpBtn.classList.toggle('sr-has-new', count > 0);
+    jumpBtn.textContent = count ? `跳到最新（${count}）` : '跳到最新';
+  }
+
+  function paint(scroll = false) {
+    const stick = scroll || nearBottom();
+    const frag = document.createDocumentFragment();
+    visible.forEach((entry) => {
+      const line = document.createElement('div');
+      line.className = `sr-sys${entry.kind && entry.kind !== 'system' ? ` sr-sys-${entry.kind}` : ''}`;
+      line.textContent = entry.text;
+      if (!animated.has(entry)) {
+        animated.add(entry);
+        line.classList.add('sr-sys-new');
+      }
+      frag.append(line);
+    });
+    el.replaceChildren(frag);
+    if (stick) el.scrollTop = el.scrollHeight;
+    updateJump();
+  }
+
+  function stopTimer() {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  }
+
+  function schedule() {
+    if (timer || !pending.length) return;
+    timer = setTimeout(() => {
+      timer = null;
+      const entry = pending.shift();
+      if (!entry) return;
+      visible.push(entry);
+      if (visible.length > 140) visible = visible.slice(-140);
+      if (typeof onReveal === 'function') onReveal(entry);
+      paint(false);
+      schedule();
+    }, delay);
+  }
+
+  function sync(localEntries, logEntries, nextKey, nextDelay) {
+    delay = nextDelay || delay;
+    const all = [...localEntries, ...(logEntries || [])];
+    const keys = all.map(feedKey);
+    const prefix = nextKey === key && keys.length >= refKeys.length &&
+      refKeys.every((item, index) => item === keys[index]);
+    if (!prefix) {
+      stopTimer();
+      key = nextKey;
+      refKeys = keys;
+      pending = [];
+      visible = all.slice(-140);
+      visible.forEach((entry) => animated.add(entry));
+      paint(true);
+      return;
+    }
+    if (keys.length > refKeys.length) {
+      const fresh = all.slice(refKeys.length);
+      refKeys = keys;
+      pending.push(...fresh);
+      schedule();
+    }
+    updateJump();
+  }
+
+  function flush() {
+    stopTimer();
+    if (pending.length) {
+      const fresh = pending;
+      pending = [];
+      if (typeof onReveal === 'function') fresh.forEach((entry) => onReveal(entry));
+      visible.push(...fresh);
+      if (visible.length > 140) visible = visible.slice(-140);
+    }
+    paint(true);
+  }
+
+  function reset() {
+    stopTimer();
+    refKeys = [];
+    visible = [];
+    pending = [];
+    key = '';
+    el.replaceChildren();
+    updateJump();
+  }
+
+  if (jumpBtn) jumpBtn.addEventListener('click', flush);
+  return { sync, flush, reset };
+}
+
+function bloodFxAction(entry) {
+  if (!Blood || !entry?.text) return null;
+  const match = entry.text.match(/(\d{2}) 号(?:对 (\d{2}) 号)?(打出|发动|触发)【([^】]+)】/);
+  if (!match) return null;
+  const [, actor, mentionedTarget, verb, name] = match;
+  const cardKey = Object.keys(Blood.CARDS || {}).find((key) => Blood.CARDS[key].name === name);
+  const skillKey = Object.keys(Blood.SKILLS || {}).find((key) => Blood.SKILLS[key].name === name);
+  if (!cardKey && !skillKey) return null;
+  let target = mentionedTarget ? Number(mentionedTarget) : null;
+  if (!target) {
+    const after = entry.text.match(/(\d{2}) 号(?:回复气血|受到|失去|获得)/);
+    if (after) target = Number(after[1]);
+  }
+  return {
+    seat: Number(actor),
+    target,
+    verb,
+    name,
+    key: cardKey || skillKey,
+    kind: cardKey ? 'card' : 'skill',
+  };
+}
+
+function bloodFxNumber(entry) {
+  if (!entry?.text) return null;
+  const loss = entry.text.match(/(\d{2}) 号(?:受到|失去) (\d+) 点(?:伤害|气血)/);
+  if (loss) return { seat: Number(loss[1]), amount: Number(loss[2]), heal: false };
+  const heal = entry.text.match(/(\d{2}) 号(?:回复|恢复)(?:到)?(?:了)?(?: (\d+) 点)?气血/);
+  if (heal) return { seat: Number(heal[1]), amount: heal[2] ? Number(heal[2]) : 0, heal: true };
+  return null;
+}
+
+function floatAtSeat(seat, text, heal, root) {
+  if (!seat || !root || document.hidden) return;
+  const seatEl = root.querySelector(`[data-seat="${seat}"]`);
+  if (!seatEl) return;
+  const rect = seatEl.getBoundingClientRect();
+  if (!rect.width || rect.bottom < 0 || rect.top > window.innerHeight) return;
+  const fx = document.createElement('div');
+  fx.className = `sr-fx-dmg${heal ? ' sr-fx-heal' : ''}`;
+  fx.textContent = text;
+  fx.style.left = `${rect.left + rect.width / 2}px`;
+  fx.style.top = `${rect.top + rect.height / 2}px`;
+  els.bloodFx.append(fx);
+  seatEl.classList.remove('sr-fx-hit');
+  void seatEl.offsetWidth;
+  seatEl.classList.add('sr-fx-hit');
+  setTimeout(() => seatEl.classList.remove('sr-fx-hit'), 520);
+  setTimeout(() => fx.remove(), 1050);
+}
+
+function flashBloodFx(entry, state, seatRoot) {
+  if (!state?.blood || document.hidden) return;
+  const action = bloodFxAction(entry);
+  if (action) {
+    const previous = els.bloodFx.querySelector('.sr-fx-banner');
+    if (previous) previous.remove();
+    const banner = document.createElement('div');
+    banner.className = `sr-fx-banner sr-fx-${action.kind} sr-fx-${action.key}`;
+    const card = document.createElement('div');
+    card.className = 'sr-fx-card';
+    card.textContent = action.kind === 'card' ? action.name.slice(0, 2) : '技';
+    const meta = document.createElement('div');
+    meta.className = 'sr-fx-meta';
+    const title = document.createElement('strong');
+    title.textContent = `${pad(action.seat)} 号 · 【${action.name}】`;
+    const caption = document.createElement('small');
+    caption.textContent = action.target && action.target !== action.seat
+      ? `${action.verb} · 目标 ${pad(action.target)} 号`
+      : action.verb;
+    meta.append(title, caption);
+    banner.append(card, meta);
+    els.bloodFx.append(banner);
+    setTimeout(() => banner.remove(), 1600);
+  }
+  const number = bloodFxNumber(entry);
+  if (number) {
+    setTimeout(() => {
+      floatAtSeat(number.seat, number.heal ? (number.amount ? `+${number.amount}` : '回复') : `-${number.amount}`, number.heal, seatRoot);
+    }, action ? 360 : 0);
+  }
+}
+
 function renderSpectateFeed() {
-  const entries = (spectate?.g?.log || []).slice(-120);
-  const frag = document.createDocumentFragment();
-  entries.forEach((entry) => {
-    const line = document.createElement('div');
-    line.className = `sr-sys${entry.kind && entry.kind !== 'system' ? ` sr-sys-${entry.kind}` : ''}`;
-    line.textContent = entry.text;
-    frag.append(line);
-  });
-  els.spectateFeed.replaceChildren(frag);
-  els.spectateFeed.scrollTop = els.spectateFeed.scrollHeight;
+  if (!spectateFeedView) {
+    spectateFeedView = createFeedView(els.spectateFeed, els.spectateFeedLatest, (entry) => {
+      flashBloodFx(entry, spectate?.g, els.spectateSeats);
+    });
+  }
+  const state = spectate?.g;
+  spectateFeedView.sync([], state?.log || [], `spectate:${state?.matchId || spectate?.code || ''}`,
+    state?.blood ? 900 : 640);
 }
 
 function updateSpectateClock() {
@@ -1870,19 +2316,14 @@ function updateSpectateClock() {
 }
 
 function renderFeed() {
-  const entries = [];
-  localFeed.slice(-20).forEach((text) => entries.push({ kind: 'system', text }));
-  if (g?.log) entries.push(...g.log.slice(-100));
-  const stick = els.feed.scrollHeight - els.feed.scrollTop - els.feed.clientHeight < 40;
-  const frag = document.createDocumentFragment();
-  entries.forEach((entry) => {
-    const line = document.createElement('div');
-    line.className = `sr-sys${entry.kind && entry.kind !== 'system' ? ` sr-sys-${entry.kind}` : ''}`;
-    line.textContent = entry.text;
-    frag.append(line);
-  });
-  els.feed.replaceChildren(frag);
-  if (stick) els.feed.scrollTop = els.feed.scrollHeight;
+  if (!roomFeed) {
+    roomFeed = createFeedView(els.feed, els.feedLatest, (entry) => {
+      if (!els.roomView.hidden) flashBloodFx(entry, g, els.playerList);
+    });
+  }
+  const local = localFeed.slice(-20).map((text) => ({ kind: 'system', text }));
+  const key = g ? `match:${g.matchId}` : `lobby:${session?.code || ''}`;
+  roomFeed.sync(local, g?.log || [], key, g?.blood ? 900 : 640);
 }
 
 function preSpeechKey() {
@@ -2023,7 +2464,7 @@ function renderChat() {
 
 function roomSignature() {
   const action = currentAction();
-  return JSON.stringify([g, members, [...submitted], wolfPicks,
+  return JSON.stringify([g, members, room?.hostId, [...submitted], wolfPicks,
     pick, kickAsked, appointId, roleShown, room?.appointments, preSpeech.msgs, preSpeech.paused,
     preFlushing, localFeed.length, action && [action.step, action.scene]]);
 }
@@ -2058,6 +2499,7 @@ function renderRoom() {
   }
 
   els.modeLabel.textContent = `${mode.name} · ${total} 人`;
+  els.dissolveBtn.hidden = !isHost();
   renderActionPanel(mode, inGame);
   renderSeats(mode, inGame);
   renderModeInfo(mode);
@@ -2066,6 +2508,7 @@ function renderRoom() {
   renderFeed();
   updateChatForm();
   updateClock();
+  maybeShowRoomRules(mode);
   // 渲染期间可能初始化 pick 等交互状态，按渲染后的状态记录签名，避免下次轮询多重建一次。
   roomSig = roomSignature();
 }
@@ -2229,6 +2672,130 @@ function appointControls(member, mode) {
   return wrap;
 }
 
+function hpBar(hp, max, large = false) {
+  const bar = document.createElement('div');
+  bar.className = `sr-hpbar${large ? ' sr-hpbar-lg' : ''}`;
+  bar.setAttribute('aria-label', `气血 ${hp}/${max}`);
+  for (let i = 0; i < max; i += 1) {
+    const seg = document.createElement('i');
+    seg.className = 'sr-hpseg';
+    if (i < hp) {
+      seg.classList.add('on');
+      if (hp <= 1) seg.classList.add('low');
+    }
+    bar.append(seg);
+  }
+  return bar;
+}
+
+function goldPill(value) {
+  const pill = document.createElement('span');
+  pill.className = 'sr-gold-pill';
+  const coin = document.createElement('i');
+  coin.className = 'sr-coin';
+  pill.append(coin, document.createTextNode(String(value ?? 0)));
+  return pill;
+}
+
+function skillsTitle(bm, seat) {
+  return (bm.skills?.[seat] || []).map((id) => Blood?.SKILLS?.[id]?.name || id).join('、');
+}
+
+function seatBloodHud(bm, seat, alive) {
+  const hp = bm.hp?.[seat] ?? 0;
+  const max = bm.maxHp || 4;
+  const box = document.createElement('div');
+  box.className = 'sr-hud';
+  const hpRow = document.createElement('div');
+  hpRow.className = 'sr-hud-hp';
+  hpRow.append(hpBar(hp, max), document.createTextNode(`${hp}/${max}`));
+  if (alive && hp <= 1) hpRow.classList.add('sr-hp-low');
+  const row = document.createElement('div');
+  row.className = 'sr-hud-row';
+  row.append(goldPill(bm.gold?.[seat]));
+  const star = document.createElement('span');
+  star.className = 'sr-star-pips';
+  const stars = Math.max(1, bm.star?.[seat] || 1);
+  star.textContent = '★'.repeat(stars);
+  star.title = `${stars} 星`;
+  row.append(star);
+  const hand = document.createElement('span');
+  hand.className = 'sr-hand-pill';
+  hand.textContent = `牌 ${bm.handCount?.[seat] ?? 0}`;
+  row.append(hand);
+  box.append(hpRow, row);
+  const chips = document.createElement('div');
+  chips.className = 'sr-hud-chips';
+  if (bm.equipment?.[seat]) {
+    const eq = document.createElement('span');
+    eq.className = 'sr-eq-chip';
+    eq.textContent = Blood?.EQUIPMENT?.[bm.equipment[seat]]?.name || bm.equipment[seat];
+    chips.append(eq);
+  }
+  const skills = bm.skills?.[seat] || [];
+  if (skills.length) {
+    const sk = document.createElement('span');
+    sk.textContent = `技 ${skills.length}`;
+    sk.title = skillsTitle(bm, seat);
+    chips.append(sk);
+  }
+  if (chips.childElementCount) box.append(chips);
+  return box;
+}
+
+function renderMyBloodHud(bm, seat) {
+  const host = els.myBloodHud;
+  if (!host) return;
+  if (!bm || seat == null || bm.hp?.[seat] == null) {
+    host.hidden = true;
+    host.replaceChildren();
+    return;
+  }
+  const max = bm.maxHp || 4;
+  const hp = bm.hp[seat];
+  host.hidden = false;
+  host.replaceChildren();
+
+  const hpBox = document.createElement('div');
+  hpBox.className = `sr-my-hp${hp <= 1 ? ' sr-hp-low' : ''}`;
+  hpBox.append(document.createTextNode('气血'), hpBar(hp, max, true));
+  const hpNum = document.createElement('strong');
+  hpNum.textContent = `${hp}/${max}`;
+  hpBox.append(hpNum);
+
+  const res = document.createElement('div');
+  res.className = 'sr-my-res';
+  res.append(goldPill(bm.gold?.[seat]));
+  const shards = document.createElement('span');
+  shards.textContent = `碎片 ${bm.shards?.[seat] ?? 0}`;
+  const star = document.createElement('span');
+  star.textContent = `★ ${Math.max(1, bm.star?.[seat] || 1)} 星`;
+  const handCount = g?.bloodMe?.hand?.length ?? bm.handCount?.[seat] ?? 0;
+  const limit = Blood?.handleLimit?.(bm.skills?.[seat]) || 3;
+  const hand = document.createElement('span');
+  hand.textContent = `手牌 ${handCount}/${limit}`;
+  res.append(shards, star, hand);
+
+  const skills = document.createElement('div');
+  skills.className = 'sr-my-skills';
+  if (bm.equipment?.[seat]) {
+    const eq = document.createElement('span');
+    eq.className = 'sr-eq-chip';
+    eq.textContent = `装备：${Blood?.EQUIPMENT?.[bm.equipment[seat]]?.name || bm.equipment[seat]}`;
+    eq.title = Blood?.EQUIPMENT?.[bm.equipment[seat]]?.desc || '';
+    skills.append(eq);
+  }
+  (bm.skills?.[seat] || []).forEach((id) => {
+    const skill = Blood?.SKILLS?.[id];
+    const pill = document.createElement('span');
+    pill.textContent = skill?.name || id;
+    pill.title = skill?.desc || '';
+    skills.append(pill);
+  });
+  host.append(hpBox, res);
+  if (skills.childElementCount) host.append(skills);
+}
+
 function renderSeats(mode, inGame) {
   const total = mode.roles.length;
   const hostId = room?.hostId;
@@ -2247,6 +2814,7 @@ function renderSeats(mode, inGame) {
     const member = bySeat.get(seat);
     const li = document.createElement('li');
     li.className = 'sr-seat';
+    li.dataset.seat = String(seat);
 
     const head = document.createElement('div');
     head.className = 'sr-seat-head';
@@ -2351,34 +2919,7 @@ function renderSeats(mode, inGame) {
 
     li.append(head, avatar, name, marks);
     if (inGame && member && g.blood?.hp?.[seat] != null) {
-      const bm = g.blood;
-      const stats = document.createElement('div');
-      stats.className = 'sr-blood-stats';
-      const hp = document.createElement('span');
-      hp.textContent = `血 ${bm.hp[seat]}/${bm.maxHp || 4}`;
-      if (alive?.has(seat) && bm.hp[seat] <= 1) hp.classList.add('sr-hp-low');
-      const gold = document.createElement('span');
-      gold.className = 'sr-gold';
-      gold.textContent = `金 ${bm.gold[seat] ?? 0}`;
-      const star = document.createElement('span');
-      star.className = 'sr-star';
-      star.textContent = `${bm.star[seat] || 1} 星`;
-      const hand = document.createElement('span');
-      hand.textContent = `手 ${bm.handCount?.[seat] ?? 0}`;
-      stats.append(hp, gold, star, hand);
-      if (bm.equipment?.[seat]) {
-        const eq = document.createElement('span');
-        eq.textContent = Blood?.EQUIPMENT?.[bm.equipment[seat]]?.name || bm.equipment[seat];
-        stats.append(eq);
-      }
-      const skills = bm.skills?.[seat] || [];
-      if (skills.length) {
-        const sk = document.createElement('span');
-        sk.textContent = `技 ${skills.length}`;
-        sk.title = skills.map((id) => Blood?.SKILLS?.[id]?.name || id).join('、');
-        stats.append(sk);
-      }
-      li.append(stats);
+      li.append(seatBloodHud(g.blood, seat, alive?.has(seat)));
     }
     if (inGame && member && g.phase === 'night' && g.step === 'wolves' && isMyWolf()) {
       const pickers = wolfPicks.filter((row) => row.target === seat);
@@ -2408,6 +2949,7 @@ function renderSeats(mode, inGame) {
     }
     frag.append(li);
   }
+  els.playerList.dataset.cols = total <= 9 ? '3' : '4';
   els.playerList.replaceChildren(frag);
 }
 
@@ -3063,6 +3605,7 @@ function renderMyBar() {
   if (!g || !roleKey) {
     els.myBar.hidden = true;
     els.roleCard.hidden = true;
+    els.myBloodHud.hidden = true;
     return;
   }
   const role = ROLES[roleKey] || { name: roleKey, camp: 'civilian', campName: '', skill: '' };
@@ -3092,35 +3635,7 @@ function renderMyBar() {
   }
   els.roleCard.hidden = !roleShown;
 
-  els.myBar.querySelector('.sr-blood-mini')?.remove();
-  if (g.blood && seat != null && g.blood.hp?.[seat] != null) {
-    const bm = g.blood;
-    const mini = document.createElement('span');
-    mini.className = 'sr-blood-mini';
-    const parts = [
-      `气血 ${bm.hp[seat]}/${bm.maxHp || 4}`,
-      `金币 ${bm.gold[seat] ?? 0}`,
-      `${bm.star[seat] || 1} 星`,
-      `碎片 ${bm.shards?.[seat] ?? 0}`,
-    ];
-    parts.forEach((text) => {
-      const item = document.createElement('span');
-      item.textContent = text;
-      mini.append(item);
-    });
-    if (bm.equipment?.[seat]) {
-      const eq = document.createElement('span');
-      eq.textContent = Blood?.EQUIPMENT?.[bm.equipment[seat]]?.name || bm.equipment[seat];
-      mini.append(eq);
-    }
-    const skills = bm.skills?.[seat] || [];
-    if (skills.length) {
-      const sk = document.createElement('span');
-      sk.textContent = `技能：${skills.map((id) => Blood?.SKILLS?.[id]?.name || id).join('、')}`;
-      mini.append(sk);
-    }
-    els.myBar.append(mini);
-  }
+  renderMyBloodHud(g.blood, seat);
 
   const extras = [];
   if (g.lovers && seat != null) {
@@ -3187,13 +3702,154 @@ function renderModeInfo(mode) {
   desc.className = 'text-muted mb-0 mt-2';
   desc.textContent = mode.desc;
 
-  els.modeInfo.replaceChildren(title, list, desc);
+  const rulesBtn = makeBtn('查看角色与规则', 'btn-outline-dark', () => openRulesModal(mode));
+  rulesBtn.classList.add('btn-sm', 'mt-2');
+  els.modeInfo.replaceChildren(title, list, desc, rulesBtn);
   if (mode.play) {
     const play = document.createElement('p');
     play.className = 'small mb-0 mt-2';
     play.textContent = `玩法：${mode.play}`;
     els.modeInfo.append(play);
   }
+}
+
+// ---------- 每个板子的规则介绍 ----------
+function rulesNode(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
+}
+
+function rulesSection(title, hint) {
+  const section = rulesNode('section', 'sr-rules-section');
+  const head = rulesNode('div', 'sr-rules-heading');
+  head.append(rulesNode('span', '', title));
+  if (hint) head.append(rulesNode('small', '', hint));
+  section.append(head);
+  return section;
+}
+
+function nightOrderFor(mode) {
+  const roles = new Set(mode.roles);
+  const steps = [];
+  if (roles.has('thief')) steps.push('盗贼从两张底牌里选身份');
+  if (roles.has('cupid')) steps.push('丘比特连接两名情侣');
+  if (roles.has('guard')) steps.push('守卫守护一名玩家');
+  if (mode.roles.some((role) => ['werewolf', 'wolfking', 'wolfboss', 'wolfbeauty'].includes(role))) {
+    steps.push('狼队共同刀人（可在狼人频道私聊）');
+  }
+  if (roles.has('wolfbeauty')) steps.push('狼美人魅惑一名玩家');
+  if (roles.has('witch')) steps.push('女巫决定是否使用解药或毒药');
+  if (roles.has('seer')) steps.push('预言家查验一名玩家');
+  return steps;
+}
+
+function openRulesModal(mode = currentMode()) {
+  if (!mode || !els.rulesModal) return;
+  rulesModeId = mode.id || '';
+  els.rulesTitle.textContent = `${mode.name} · 规则介绍`;
+  const body = document.createDocumentFragment();
+
+  const intro = rulesNode('div', 'sr-rules-intro');
+  intro.append(rulesNode('strong', '', `${mode.roles.length} 人局`));
+  intro.append(document.createTextNode(` · ${mode.rated === false ? '不计入 Elo' : '计入团队 Elo'} · ${mode.sheriff === false ? '本板子不设警长' : '有警长竞选'}`));
+  intro.append(rulesNode('div', 'mt-1', mode.desc || ''));
+  if (mode.play) intro.append(rulesNode('div', 'mt-1', `玩法提示：${mode.play}`));
+  body.append(intro);
+
+  const roleSection = rulesSection('会出现的角色与技能', '身份只在自己屏幕上显示');
+  const roleGrid = rulesNode('div', 'sr-rules-roles');
+  const counts = {};
+  const order = [];
+  mode.roles.forEach((key) => {
+    if (!counts[key]) { counts[key] = 0; order.push(key); }
+    counts[key] += 1;
+  });
+  order.forEach((key) => {
+    const role = ROLES[key];
+    if (!role) return;
+    const card = rulesNode('div', 'sr-rule-role');
+    const head = rulesNode('div', 'sr-rule-role-head');
+    const tag = rulesNode('span', `sr-tag ${CAMPS[role.camp]?.tag || ''}`, role.name);
+    head.append(tag, rulesNode('strong', '', role.campName || CAMPS[role.camp]?.name || ''));
+    head.append(rulesNode('span', 'sr-rule-role-count', `×${counts[key]}`));
+    card.append(head, rulesNode('p', '', role.skill || ''));
+    roleGrid.append(card);
+  });
+  roleSection.append(roleGrid);
+  body.append(roleSection);
+
+  const flowSection = rulesSection('流程', '固定板子按服务端计时自动推进');
+  const flow = rulesNode('ol', 'sr-rules-flow');
+  const night = nightOrderFor(mode);
+  if (night.length) flow.append(rulesNode('li', '', `夜晚依次进行：${night.join(' → ')}。`));
+  if (mode.sheriff === false) {
+    flow.append(rulesNode('li', '', '天亮后直接公布昨夜死讯；本板子没有警长竞选，也没有警徽。'));
+  } else {
+    flow.append(rulesNode('li', '', '首日天亮后先竞选警长：候选人依次发言，警下玩家投票；竞选结束后公布昨夜死讯。警长决定发言方向，放逐投票时 1 票算 1.5 票。'));
+  }
+  flow.append(rulesNode('li', '', '白天按顺序发言，每人限时；讨论结束后同时投票放逐。平票进入 PK，再平票则本轮无人出局。'));
+  flow.append(rulesNode('li', '', '出局结算按规则处理遗言、猎人开枪、狼王带人、警徽移交等；夜间死因不会公开具体来源。'));
+  if (mode.bloodmoon) {
+    flow.append(rulesNode('li', '', '血月牌局在夜晚结算后先进入 20 秒濒死求桃，再进入私人商店，购物结束后才开始白天讨论。'));
+    flow.append(rulesNode('li', '', '每人每天最多打出 1 张手牌或使用 1 个主动技能，服务端会逐人结算并公开结果。'));
+  }
+  flow.append(rulesNode('li', '', mode.nightMs || mode.speechMs
+    ? `本局夜晚行动 ${Math.round((mode.nightMs || 60000) / 1000)} 秒，每人发言 ${Math.round((mode.speechMs || 60000) / 1000)} 秒；超时自动继续。`
+    : '固定板子每个行动步骤、发言、投票均为 60 秒；超时自动继续。'));
+  flow.append(rulesNode('li', '', '掉线不算出局；回到同一账号和房间可以继续。离开房间按出局处理。'));
+  flowSection.append(flow);
+  body.append(flowSection);
+
+  const winSection = rulesSection('胜利条件');
+  const winList = rulesNode('ul', 'sr-rules-flow');
+  winList.append(rulesNode('li', '', mode.bloodmoon
+    ? '胜负按屠边：所有狼牌出局，好人获胜；神职或平民全部出局，狼人获胜。气血归零不会立刻出局，放逐才会直接处决。'
+    : '胜负按屠边：所有狼牌出局，好人获胜；神职或平民全部出局，狼人获胜。'));
+  if (mode.roles.includes('cupid')) {
+    winList.append(rulesNode('li', '', '若情侣一人一狼，情侣与丘比特组成第三方，目标是让其他所有人出局。'));
+  }
+  winList.append(rulesNode('li', '', mode.rated === false
+    ? '本板子为娱乐局，不结算 Elo；完整过程仍会保存到历史回放。'
+    : '对局结束后按团队 Elo 结算，评分永久保存在账号名上。'));
+  winSection.append(winList);
+  body.append(winSection);
+
+  if (mode.bloodmoon && Blood) {
+    const bloodSection = rulesSection('血月扩展', '娱乐规则，不计 Elo');
+    const grid = rulesNode('div', 'sr-rules-blood');
+    const block = (title, text) => {
+      const cell = rulesNode('div');
+      cell.append(rulesNode('strong', '', title), rulesNode('p', '', text));
+      grid.append(cell);
+    };
+    block('气血与伤害', `每人 ${Blood.MAX_HP} 点气血。狼刀和毒药改为扣气血，气血归零进入濒死，20 秒内可用【桃】救回；放逐仍然直接出局。你只会看到自己掉了多少气血，不会知道是狼刀还是毒药。`);
+    block('经济与商店', `初始 ${Blood.START_GOLD} 金。天亮先发工资并补 1 张手牌，再进入 20 秒私人商店：碎片 3 金、装备 4 金、补给 2 金、魔法骰子 5 金。手牌上限 ${Blood.HAND_LIMIT} 张。`);
+    block('手牌', Object.values(Blood.CARDS || {}).map((card) => `【${card.name}】${card.desc}`).join(' '));
+    block('装备', Object.values(Blood.EQUIPMENT || {}).map((item) => `【${item.name}】${item.desc}`).join(' '));
+    block('魔法骰子', '抽一个随机技能，普通 / 稀有 / 传说三档；最多保留 2 个技能，重复技能会自动换成碎片。');
+    block('主动技能', '主动技能每人每天最多用 1 次；部分传说技能每局只能发动 1 次。被动技能自动生效。');
+    bloodSection.append(grid);
+    bloodSection.append(rulesNode('p', 'sr-rules-note', '特效提示：流程记录会逐条播放，血月出牌、技能和伤害会显示在座位与屏幕中央；想立刻看完可点「跳到最新」。'));
+    body.append(bloodSection);
+  }
+
+  els.rulesBody.replaceChildren(body);
+  els.rulesModal.hidden = false;
+  els.rulesModal.scrollTop = 0;
+}
+
+function closeRulesModal() {
+  if (els.rulesModal) els.rulesModal.hidden = true;
+}
+
+function maybeShowRoomRules(mode) {
+  if (!session || !room || !mode || g) return; // 对局中重连不遮挡当前回合，仍可点「规则介绍」查看
+  const key = `${session.code}:${mode.id || ''}`;
+  if (rulesShownFor === key) return;
+  rulesShownFor = key;
+  openRulesModal(mode);
 }
 
 function renderGameOver() {
@@ -3509,6 +4165,33 @@ els.leaveBtn.addEventListener('click', () => {
   leaveRoom().catch((error) => toast(friendlyError(error)));
 });
 
+els.dissolveBtn.addEventListener('click', async () => {
+  if (!isHost()) {
+    toast('仅房主可以解散房间');
+    return;
+  }
+  if (!window.confirm('确定解散这个房间？所有人会立即退出，本局不会保存回放。')) return;
+  try {
+    await dissolveRoom();
+  } catch (error) {
+    toast(friendlyError(error));
+  }
+});
+
+els.roomRules.addEventListener('click', () => openRulesModal(currentMode()));
+els.spectateRules.addEventListener('click', () => {
+  const mode = spectate?.room?.options
+    ? modeFromOptions(spectate.room.options)
+    : modeById(spectate?.g?.mode || 'std12');
+  openRulesModal(mode);
+});
+els.rulesClose.addEventListener('click', closeRulesModal);
+els.rulesModal.querySelector('[data-rules-close]').addEventListener('click', closeRulesModal);
+
+els.matchBtn.addEventListener('click', startMatch);
+els.matchCancelBtn.addEventListener('click', cancelMatchQueue);
+els.liveRoomsRefresh.addEventListener('click', () => loadLiveRooms());
+
 els.replayBtn.addEventListener('click', () => {
   replayGame().catch((error) => toast(friendlyError(error)));
 });
@@ -3559,6 +4242,7 @@ document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
   closeAccountMenu();
   if (els.customModal && !els.customModal.hidden) closeCustomModal();
+  if (els.rulesModal && !els.rulesModal.hidden) closeRulesModal();
   if (els.authModal && !els.authModal.hidden && profile) closeAuthModal();
 });
 
