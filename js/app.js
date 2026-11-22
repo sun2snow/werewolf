@@ -4,6 +4,7 @@ const {
   ROLES, MODES, CAMPS, modeById, CUSTOM_ORDER, CUSTOM_LIMITS, buildCustomMode, modeFromOptions,
 } = window.WOLF_MODES;
 const Rules = window.WolfRules;
+const Blood = window.WOLF_BLOODMOON;
 
 const DUR = {
   thief: 60000,
@@ -55,6 +56,8 @@ const STEP_LABEL = {
   order: '警长定顺序',
   badge: '警徽移交',
   lastwords: '遗言',
+  shop: '商店',
+  rescue: '濒死求桃',
 };
 
 const DEATH_SHORT = {
@@ -244,6 +247,8 @@ let roomSig = '';
 let chatSig = '';
 let lastChangeAt = 0;
 let pick = null;
+let bloodBuy = [];
+let bloodBuyDay = 0;
 let kickAsked = null;
 let appointId = null;
 let preSpeech = { day: 0, msgs: [] };
@@ -2078,6 +2083,8 @@ function phaseTextOf(state) {
   if (state.phase === 'dawn') return `第 ${state.day} 天 · 天亮了`;
   if (state.phase === 'vote') return `第 ${state.day} 天 · 投票`;
   if (state.phase === 'runoff') return `第 ${state.day} 天 · PK 投票`;
+  if (state.phase === 'shop') return `第 ${state.day} 天 · 商店`;
+  if (state.phase === 'rescue') return `第 ${state.day} 天 · 濒死求桃`;
   if (settling(state)) return '出局结算';
   if (['sheriff','order','lastwords','badge'].includes(state.phase)) return `第 ${state.day} 天 · ${STEP_LABEL[state.step]}`;
   return `第 ${state.day} 天 · 讨论`;
@@ -2126,6 +2133,17 @@ function renderStatusPrompt(mode, inGame) {
     els.statusPrompt.textContent = '警长已出局，正在移交警徽…';
     return;
   }
+  if (g.phase === 'shop') {
+    els.statusPrompt.textContent = g.bloodMe?.locked
+      ? '你的商店被【乐不思蜀】锁定，今天不能购买，等待讨论开始。'
+      : '商店阶段：先领工资、补手牌。选择碎片/装备/补给/魔法骰子后点「确认购物」，超时自动跳过。';
+    return;
+  }
+  if (g.phase === 'rescue') {
+    const dying = (g.blood?.rescueQueue || []).map(pad).join('、');
+    els.statusPrompt.textContent = `濒死：${dying} 号气血归零，持有【桃】的玩家可以救人；没人救则出局。`;
+    return;
+  }
   if (!isAliveSeat(myRow?.seat)) {
     els.statusPrompt.textContent = '你已出局，可以继续围观本局。';
     return;
@@ -2154,7 +2172,9 @@ function renderStatusPrompt(mode, inGame) {
       els.statusPrompt.textContent = `${order.length > 1 ? `发言顺序：${list}。` : ''}当前 ${pad(speaker)} 号（${position}）${hint}。`;
     }
   } else if (g.phase === 'vote' || g.phase === 'runoff') {
-    els.statusPrompt.textContent = '投票：点击座位选择目标，不能投自己，也可以弃权。';
+    const weight = g.blood?.voteWeight?.[myRow?.seat] || 1;
+    els.statusPrompt.textContent = `投票：点击座位选择目标，不能投自己，也可以弃权。${
+      weight > 1 ? `你今天的票权重是 ${weight}。` : ''}`;
   } else if (settling(g)) {
     els.statusPrompt.textContent = '正在结算…';
   } else if (g.phase === 'dawn') {
@@ -2330,6 +2350,36 @@ function renderSeats(mode, inGame) {
     }
 
     li.append(head, avatar, name, marks);
+    if (inGame && member && g.blood?.hp?.[seat] != null) {
+      const bm = g.blood;
+      const stats = document.createElement('div');
+      stats.className = 'sr-blood-stats';
+      const hp = document.createElement('span');
+      hp.textContent = `血 ${bm.hp[seat]}/${bm.maxHp || 4}`;
+      if (alive?.has(seat) && bm.hp[seat] <= 1) hp.classList.add('sr-hp-low');
+      const gold = document.createElement('span');
+      gold.className = 'sr-gold';
+      gold.textContent = `金 ${bm.gold[seat] ?? 0}`;
+      const star = document.createElement('span');
+      star.className = 'sr-star';
+      star.textContent = `${bm.star[seat] || 1} 星`;
+      const hand = document.createElement('span');
+      hand.textContent = `手 ${bm.handCount?.[seat] ?? 0}`;
+      stats.append(hp, gold, star, hand);
+      if (bm.equipment?.[seat]) {
+        const eq = document.createElement('span');
+        eq.textContent = Blood?.EQUIPMENT?.[bm.equipment[seat]]?.name || bm.equipment[seat];
+        stats.append(eq);
+      }
+      const skills = bm.skills?.[seat] || [];
+      if (skills.length) {
+        const sk = document.createElement('span');
+        sk.textContent = `技 ${skills.length}`;
+        sk.title = skills.map((id) => Blood?.SKILLS?.[id]?.name || id).join('、');
+        stats.append(sk);
+      }
+      li.append(stats);
+    }
     if (inGame && member && g.phase === 'night' && g.step === 'wolves' && isMyWolf()) {
       const pickers = wolfPicks.filter((row) => row.target === seat);
       if (pickers.length) {
@@ -2407,6 +2457,86 @@ function submittedHelp(step) {
   return submitted.has(`${g.day}:${step}`);
 }
 
+const BLOOD_BUY_COST = { shard: 3, equip: 4, supply: 2, dice: 5 };
+
+function renderBloodShop(seat) {
+  const b = g.blood;
+  if (!b) return;
+  if (bloodBuyDay !== g.day) {
+    bloodBuy = [];
+    bloodBuyDay = g.day;
+  }
+  if (submittedHelp('shop')) {
+    els.actionArea.append(note('已提交购物，等待其他人…'));
+    return;
+  }
+  const bm = g.bloodMe || {};
+  if (bm.locked ?? b.locked?.[seat]) {
+    els.actionArea.append(note('商店被【乐不思蜀】锁定，今天无法购物。'));
+    return;
+  }
+  const gold = b.gold?.[seat] ?? 0;
+  const star = b.star?.[seat] ?? 1;
+  const shards = bm.shards ?? b.shards?.[seat] ?? 0;
+  const equip = b.equipment?.[seat];
+  const skills = b.skills?.[seat] || [];
+  const handCount = b.handCount?.[seat] ?? 0;
+  const handLimit = (Blood?.HAND_LIMIT ?? 3) + (skills.includes('shouqi') ? 1 : 0);
+  const shopEquip = bm.shop?.equip;
+  els.actionArea.append(note(`第 ${g.day} 天商店：你有 ${gold} 金、${star}★、${shards} 碎片、${skills.length}/2 技能。购物只对你自己可见，结算后其他人只能看到结果。`));
+
+  const spent = bloodBuy.reduce((sum, key) => sum + BLOOD_BUY_COST[key], 0);
+  const wrap = document.createElement('div');
+  wrap.className = 'sr-blood-hand';
+  const addOption = (key, label, disabled) => {
+    const selected = bloodBuy.includes(key);
+    const btn = makeBtn(`${selected ? '✓ ' : ''}${label}`, selected ? 'btn-danger' : 'btn-outline-primary',
+      () => {
+        bloodBuy = selected ? bloodBuy.filter((k) => k !== key) : [...bloodBuy, key];
+        renderRoom();
+      }, disabled && !selected);
+    wrap.append(btn);
+  };
+  if (shopEquip && !equip) addOption('equip', `装备·${Blood?.EQUIPMENT?.[shopEquip]?.name || shopEquip}（4金）`, spent + 4 > gold);
+  if (star < 3) addOption('shard', `碎片（3金，还差 ${Math.max(1, (star === 1 ? 2 : 3) - shards)} 个升星）`, spent + 3 > gold);
+  if (skills.length < 2) addOption('dice', '魔法骰子（5金，抽技能）', spent + 5 > gold);
+  addOption('supply', '补给（2金，摸 2 张）', spent + 2 > gold || handCount >= handLimit);
+  els.actionArea.append(wrap);
+  els.actionArea.append(note(`已选 ${bloodBuy.length} 项，共 ${spent} 金；结算时按选择顺序扣钱，钱不够的部分自动作废。`));
+  const submit = makeBtn(`确认购物${bloodBuy.length ? `（${bloodBuy.length} 项）` : '（空过）'}`, 'btn-danger', async () => {
+    const buys = bloodBuy.slice(0, 4);
+    bloodBuy = [];
+    await act('shop', null, { buys });
+  });
+  els.actionArea.append(submit);
+}
+
+function renderBloodRescue(seat) {
+  const b = g.blood;
+  if (!b) return;
+  const queue = b.rescueQueue || [];
+  if (!queue.length) {
+    els.actionArea.append(note('等待濒死结算…'));
+    return;
+  }
+  const dying = queue.map((s) => `${pad(s)} 号（${Math.max(0, b.hp?.[s] ?? 0)} 血）`).join('、');
+  if (submittedHelp('rescue')) {
+    els.actionArea.append(note('已用桃，等待其他濒死结算…'));
+    return;
+  }
+  const bm = g.bloodMe || {};
+  const hasTao = (bm.hand || []).includes('tao');
+  if (!hasTao) {
+    els.actionArea.append(note(`濒死：${dying}。你没有【桃】，等待其他人救援或 20 秒后自动结算。`));
+    return;
+  }
+  els.actionArea.append(note(`濒死：${dying}。你手上有【桃】，可以选择救一人；不救则等待倒计时结束。`));
+  queue.forEach((target) => {
+    els.actionArea.append(makeBtn(`对 ${pad(target)} 号用桃（+2 血）`, 'btn-success',
+      () => act('rescue', target, { target })));
+  });
+}
+
 function renderActionPanel(mode, inGame) {
   els.actionArea.replaceChildren();
   if (!inGame) {
@@ -2477,7 +2607,11 @@ function renderActionPanel(mode, inGame) {
     return;
   }
 
-  if (g.phase === 'night') {
+  if (g.phase === 'shop') {
+    renderBloodShop(seat);
+  } else if (g.phase === 'rescue') {
+    renderBloodRescue(seat);
+  } else if (g.phase === 'night') {
     renderNightPanel(seat, role);
   } else if (g.phase === 'day') {
     renderDayPanel(seat, role);
@@ -2660,7 +2794,88 @@ function appendExplodeButtons(seat, role) {
   els.actionArea.append(note('自爆后你立即出局，今天的投票和剩余流程全部跳过，直接进入黑夜。'));
 }
 
+function bloodCardName(id) {
+  return Blood?.CARDS?.[id]?.name || id;
+}
+
+function bloodSkillName(id) {
+  return Blood?.SKILLS?.[id]?.name || id;
+}
+
+function renderBloodDayActions(seat) {
+  if (!g.blood || seat == null) return false;
+  if (pick && pick.kind === 'blood') {
+    els.actionArea.append(note('选择目标后点「确认」。'));
+    els.actionArea.append(pickButtons(pick.onConfirm));
+    els.actionArea.append(makeBtn('取消', 'btn-outline-secondary', clearPick));
+    return true;
+  }
+  const used = Boolean(g.blood.actionUsed?.[seat]) || submittedHelp('card') || submittedHelp('skill');
+  if (used) {
+    els.actionArea.append(note('今天已经出过牌或技能，等待发言/投票。'));
+    return false;
+  }
+  const bm = g.bloodMe || {};
+  const hand = Array.isArray(bm.hand) ? bm.hand : [];
+  const skills = (g.blood.skills?.[seat] || []).filter((id) => ['xiaoshi', 'shunshou', 'bingliang', 'lebu', 'juedou', 'taoyuan', 'xietianzi'].includes(id));
+  if (!hand.length && !skills.length) return false;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'sr-blood-card';
+  const title = document.createElement('div');
+  title.className = 'sr-blood-card-title';
+  title.textContent = '血月出牌：每天限 1 张牌或 1 个主动技能；出牌公开，目标有「闪」会自动抵消「杀」。';
+  wrap.append(title);
+
+  if (hand.length) {
+    const row = document.createElement('div');
+    row.className = 'sr-blood-hand';
+    hand.forEach((card) => {
+      const name = bloodCardName(card);
+      const info = Blood?.CARDS?.[card]?.desc || '';
+      const btn = makeBtn(name, 'btn-outline-danger', null, card === 'shan');
+      btn.title = info;
+      if (card !== 'shan') {
+        btn.addEventListener('click', () => {
+          const allowed = card === 'tao' ? g.aliveSeats.slice() : g.aliveSeats.filter((s) => s !== seat);
+          beginPick('blood', allowed, 1, (sel) => act('card', sel[0], { card, target: sel[0] }));
+          renderRoom();
+        });
+      }
+      row.append(btn);
+    });
+    wrap.append(row);
+  }
+
+  if (skills.length) {
+    const row = document.createElement('div');
+    row.className = 'sr-blood-hand';
+    const skillDay = bm.skillDay === g.day;
+    skills.forEach((id) => {
+      const usedLimited = (bm.usedSkills || []).includes(id);
+      const btn = makeBtn(`技能·${bloodSkillName(id)}`, 'btn-outline-primary', null, skillDay || usedLimited);
+      btn.title = Blood?.SKILLS?.[id]?.desc || '';
+      if (!skillDay && !usedLimited) {
+        btn.addEventListener('click', () => {
+          if (id === 'taoyuan' || id === 'xiaoshi') {
+            act('skill', null, { skill: id, target: null });
+            return;
+          }
+          const allowed = id === 'xietianzi' ? g.aliveSeats.slice() : g.aliveSeats.filter((s) => s !== seat);
+          beginPick('blood', allowed, 1, (sel) => act('skill', sel[0], { skill: id, target: sel[0] }));
+          renderRoom();
+        });
+      }
+      row.append(btn);
+    });
+    wrap.append(row);
+  }
+  els.actionArea.append(wrap);
+  return false;
+}
+
 function renderDayPanel(seat, role) {
+  if (g.blood && renderBloodDayActions(seat)) return;
   if (!submittedHelp('day') && renderExplodePick(seat, role)) return;
   if (role === 'knight' && !g.knightUsed && !submittedHelp('day')) {
     if (pick && pick.kind === 'duel') {
@@ -2877,6 +3092,36 @@ function renderMyBar() {
   }
   els.roleCard.hidden = !roleShown;
 
+  els.myBar.querySelector('.sr-blood-mini')?.remove();
+  if (g.blood && seat != null && g.blood.hp?.[seat] != null) {
+    const bm = g.blood;
+    const mini = document.createElement('span');
+    mini.className = 'sr-blood-mini';
+    const parts = [
+      `气血 ${bm.hp[seat]}/${bm.maxHp || 4}`,
+      `金币 ${bm.gold[seat] ?? 0}`,
+      `${bm.star[seat] || 1} 星`,
+      `碎片 ${bm.shards?.[seat] ?? 0}`,
+    ];
+    parts.forEach((text) => {
+      const item = document.createElement('span');
+      item.textContent = text;
+      mini.append(item);
+    });
+    if (bm.equipment?.[seat]) {
+      const eq = document.createElement('span');
+      eq.textContent = Blood?.EQUIPMENT?.[bm.equipment[seat]]?.name || bm.equipment[seat];
+      mini.append(eq);
+    }
+    const skills = bm.skills?.[seat] || [];
+    if (skills.length) {
+      const sk = document.createElement('span');
+      sk.textContent = `技能：${skills.map((id) => Blood?.SKILLS?.[id]?.name || id).join('、')}`;
+      mini.append(sk);
+    }
+    els.myBar.append(mini);
+  }
+
   const extras = [];
   if (g.lovers && seat != null) {
     if (g.lovers.includes(seat)) {
@@ -2895,7 +3140,13 @@ function renderMyBar() {
   if (roleKey === 'seer' && g.checks?.length) {
     const mine = g.checks.filter((check) => check.seat === seat);
     if (mine.length) {
-      extras.push(`验人：${mine.map((check) => `${pad(check.target)} 号${check.killer ? '狼人' : '好人'}`).join('，')}`);
+      extras.push(`验人：${mine.map((check) => {
+        let text = `${pad(check.target)} 号${check.killer ? '狼人' : '好人'}`;
+        if (check.role) text += `（${ROLES[check.role]?.name || check.role}）`;
+        if (check.hasTao) text += '，有桃';
+        if (check.gold != null) text += `，${check.gold} 金`;
+        return text;
+      }).join('，')}`);
     }
   }
   els.roleExtra.hidden = extras.length === 0;

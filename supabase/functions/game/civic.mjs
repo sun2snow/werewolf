@@ -7,7 +7,7 @@ export function speechOrder(seats, start, dir) {
   return cycle.slice(i).concat(cycle.slice(0, i));
 }
 
-export function civicScenes(state, { enterStep, startDay, isBotSeat, isSeatOnline, tallyVotes, resume, openConfirm, announcePending }) {
+export function civicScenes(state, { enterStep, startDay, isBotSeat, isSeatOnline, tallyVotes, resume, openConfirm, announcePending, startShop }) {
   const log = (text) => state().log.push({ day: state().day, kind: 'system', text });
   function enter(phase, step = phase) {
     state().phase = phase;
@@ -22,6 +22,7 @@ export function civicScenes(state, { enterStep, startDay, isBotSeat, isSeatOnlin
   }
   function sunrise() {
     const g = state();
+    if (g.blood && typeof startShop === 'function') return startShop();
     if (g.day !== 1 || g.sheriffDone) return beginDiscussion();
     enter('sheriff', 'policeSignup');
     log('第 1 天警长竞选开始，请选择是否上警');

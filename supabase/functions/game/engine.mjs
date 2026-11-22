@@ -3,10 +3,17 @@ import { civicPhase, civicScenes, speechOrder } from './civic.mjs';
 import { TURN_MS as DEFAULT_TURN_MS, turnClock } from './turn-clock.mjs';
 import '../_shared/rules.js';
 import '../_shared/modes.js';
+import '../_shared/bloodmoon.js';
 export const Rules = globalThis.WolfRules;
 export const { MODES, CUSTOM_ORDER, CUSTOM_LIMITS, buildCustomMode, modeFromOptions } = globalThis.WOLF_MODES;
+export const Blood = globalThis.WOLF_BLOODMOON;
 const DAWN_MS = 6000;
+const SHOP_MS = 20_000;
+const RESCUE_MS = 20_000;
 const SHOOTER_ROLES = ['hunter', 'wolfboss'];
+const BLOOD = 'bloodmoon';
+const BLOOD_SKILL_COST = { shard: 3, equip: 4, supply: 2, dice: 5 };
+const BLOOD_ACTIVE_SKILLS = ['xiaoshi', 'shunshou', 'bingliang', 'lebu', 'juedou', 'taoyuan', 'xietianzi'];
 
 const REASON_LABEL = {
   wolf: '（被狼人杀害）',
@@ -38,7 +45,7 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
   const pad = (seat) => String(seat).padStart(2, '0');
   const civic = civicScenes(() => g, {
     enterStep, startDay, isBotSeat, isSeatOnline, tallyVotes: Rules.tallyVotes, resume,
-    openConfirm: openConfirmation, announcePending,
+    openConfirm: openConfirmation, announcePending, startShop,
   });
   function fetchActions(day, step) {
     const latest = new Map();
@@ -121,9 +128,579 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
       winner: null,
       winReason: '',
     };
+    if (mode.id === BLOOD) g.blood = createBloodState(roster);
     g.log.push({ day: 1, kind: 'night', text: '第 1 夜 · 天黑请闭眼' });
+    if (g.blood) {
+      g.log.push({
+        day: 1,
+        kind: 'system',
+        text: `血月牌局：每人 ${Blood.MAX_HP} 气血、${Blood.START_GOLD} 金、1 张手牌；狼刀扣血，放逐直接出局`,
+      });
+    }
     g.matchId = crypto.randomUUID();
     startNightInternal(true);
+  }
+
+  function createBloodState(players) {
+    const hp = {}, gold = {}, hand = {}, star = {}, shards = {}, equipment = {};
+    const skills = {}, skillUsed = {}, skillDay = {}, equipmentUsed = {}, actionUsed = {};
+    const shop = {}, shopLock = {}, incomePenalty = {};
+    const spoke = {}, voteHit = {}, voteWeight = {};
+    players.forEach((p) => {
+      hp[p.seat] = Blood.MAX_HP;
+      gold[p.seat] = Blood.START_GOLD;
+      hand[p.seat] = [Blood.randomCard()];
+      star[p.seat] = 1;
+      shards[p.seat] = 0;
+      equipment[p.seat] = null;
+      skills[p.seat] = [];
+      skillUsed[p.seat] = [];
+      skillDay[p.seat] = 0;
+      equipmentUsed[p.seat] = false;
+      actionUsed[p.seat] = false;
+      shop[p.seat] = { equip: Blood.randomEquipment(), locked: false };
+      shopLock[p.seat] = false;
+      incomePenalty[p.seat] = 0;
+      spoke[p.seat] = [];
+      voteHit[p.seat] = [];
+      voteWeight[p.seat] = 1;
+    });
+    return {
+      hp, gold, hand, star, shards, equipment, skills, skillUsed, skillDay, equipmentUsed,
+      actionUsed, shop, shopLock, incomePenalty, spoke, voteHit, voteWeight,
+      cardPlayed: [], skillPlayed: [],
+      rescueQueue: [], rescueSaved: [],
+      nightHits: {}, nightReasons: {}, lastHits: [],
+      cardResolved: [], skillResolved: [],
+      shopResolved: false,
+    };
+  }
+
+  // ---- 血月牌局：经济、商店、手牌、技能与气血 ----
+  const bloodHas = (seat, skill) => Boolean(g.blood?.skills[seat]?.includes(skill));
+  const bloodStar = (seat) => g.blood?.star[seat] || 1;
+  const bloodHandLimit = (seat) => Blood.handleLimit(g.blood.skills[seat]);
+
+  function bloodLog(text, kind = 'system') {
+    g.log.push({ day: g.day, kind, text });
+  }
+
+  function bloodHeal(seat, amount) {
+    if (!g.blood || !isAliveSeat(seat)) return 0;
+    const before = g.blood.hp[seat];
+    g.blood.hp[seat] = Math.min(Blood.MAX_HP, before + amount);
+    return g.blood.hp[seat] - before;
+  }
+
+  function bloodDraw(seat, count = 1) {
+    if (!g.blood || !isAliveSeat(seat)) return;
+    const limit = bloodHandLimit(seat);
+    for (let i = 0; i < count; i += 1) {
+      if (g.blood.hand[seat].length >= limit) break;
+      g.blood.hand[seat].push(Blood.randomCard());
+    }
+  }
+
+  function bloodTakeCard(seat, card) {
+    const hand = g.blood.hand[seat] || [];
+    const index = hand.indexOf(card);
+    if (index === -1) return false;
+    hand.splice(index, 1);
+    return true;
+  }
+
+  function bloodSkillUsedToday(seat, skill) {
+    if (g.blood.skillDay[seat] === g.day) return true;
+    return g.blood.skillUsed[seat].includes(skill);
+  }
+
+  function bloodMarkSkill(seat, skill) {
+    g.blood.skillDay[seat] = g.day;
+    const def = Blood.skillById(skill);
+    if (def && (def.limited || def.type === 'limited')) g.blood.skillUsed[seat].push(skill);
+  }
+
+  function bloodUpgradeStar(seat) {
+    const bm = g.blood;
+    if (bm.star[seat] >= 3) return;
+    let need = bm.star[seat] === 1 ? 2 : 3;
+    while (bm.shards[seat] >= need && bm.star[seat] < 3) {
+      bm.shards[seat] -= need;
+      bm.star[seat] += 1;
+      bloodLog(`${pad(seat)} 号升到 ${bm.star[seat]} 星`);
+      if (bm.star[seat] === 3 && rowBySeat(seat)?.role === 'witch') {
+        bm.hand[seat].push('tao');
+        bloodLog(`${pad(seat)} 号的三星女巫额外获得 1 张【桃】`);
+      }
+      need = 3;
+    }
+  }
+
+  function bloodIncome(seat) {
+    const bm = g.blood;
+    const prev = g.day - 1;
+    const interestCap = 3 + (bloodHas(seat, 'tunji') ? 1 : 0);
+    const interest = Math.min(interestCap, Math.floor(bm.gold[seat] / 10));
+    let pay = 3 + interest;
+    if ((bm.spoke[seat] || []).includes(prev)) pay += 1;
+    if ((bm.voteHit[seat] || []).includes(prev)) pay += 1;
+    if (bm.hp[seat] <= 1) pay += 1;
+    if (bloodHas(seat, 'rijin')) pay += 2;
+    if (bloodHas(seat, 'fuguo')) pay += 5;
+    if (rowBySeat(seat)?.role === 'villager' && bloodStar(seat) >= 2) pay += 1;
+    pay -= bm.incomePenalty[seat] || 0;
+    return Math.max(0, pay);
+  }
+
+  function bloodPayIncome() {
+    const bm = g.blood;
+    g.aliveSeats.forEach((seat) => {
+      bm.gold[seat] += bloodIncome(seat);
+      bm.incomePenalty[seat] = 0;
+      let draw = 1;
+      if (bloodHas(seat, 'shouqi')) draw += 1;
+      if (rowBySeat(seat)?.role === 'villager' && bloodStar(seat) >= 3) draw += 1;
+      bloodDraw(seat, draw);
+    });
+  }
+
+  function startShop() {
+    if (!g.blood || g.phase === 'finished') return;
+    const bm = g.blood;
+    bloodPayIncome();
+    g.aliveSeats.forEach((seat) => {
+      bm.actionUsed[seat] = false;
+      bm.voteWeight[seat] = 1;
+      bm.shopResolved = false;
+      const locked = Boolean(bm.shopLock[seat]);
+      bm.shop[seat] = {
+        equip: locked ? null : Blood.randomEquipment(),
+        locked,
+      };
+      if (locked) {
+        bloodLog(`${pad(seat)} 号的商店被【乐不思蜀】锁定，今天无法购物`);
+      }
+    });
+    bm.cardPlayed = [];
+    bm.skillPlayed = [];
+    g.phase = 'shop';
+    g.step = 'shop';
+    g.deadline = clock() + SHOP_MS;
+    bloodLog(`第 ${g.day} 天商店开门：发工资、补 1 张手牌，${SHOP_MS / 1000} 秒内完成购物`);
+  }
+
+  function botShopChoice(seat) {
+    const bm = g.blood;
+    const buys = [];
+    if (bm.shop[seat]?.locked) return { target: null, payload: { buys } };
+    let gold = bm.gold[seat];
+    let shards = bm.shards[seat];
+    let star = bm.star[seat];
+    let equipment = bm.equipment[seat];
+    const push = (key, cost) => {
+      if (gold < cost) return false;
+      gold -= cost;
+      buys.push(key);
+      return true;
+    };
+    if (!equipment && bm.shop[seat]?.equip && Math.random() < 0.75) {
+      if (push('equip', BLOOD_SKILL_COST.equip)) equipment = bm.shop[seat].equip;
+    }
+    if (star < 3 && Math.random() < 0.7) {
+      let want = star === 1 ? 2 : 3;
+      while (star < 3 && shards >= want) {
+        shards -= want;
+        star += 1;
+        want = 3;
+      }
+      if (star < 3 && gold >= BLOOD_SKILL_COST.shard && (shards >= want - 1 || Math.random() < 0.35)) {
+        push('shard', BLOOD_SKILL_COST.shard);
+      }
+    }
+    if (bm.skills[seat].length < 2 && gold >= BLOOD_SKILL_COST.dice && Math.random() < 0.55) {
+      push('dice', BLOOD_SKILL_COST.dice);
+    }
+    if (gold >= BLOOD_SKILL_COST.supply && bm.hand[seat].length < bloodHandLimit(seat) && Math.random() < 0.55) {
+      push('supply', BLOOD_SKILL_COST.supply);
+    }
+    return { target: null, payload: { buys } };
+  }
+
+  function bloodApplyBuy(seat, key) {
+    const bm = g.blood;
+    const cost = BLOOD_SKILL_COST[key];
+    if (cost == null || bm.gold[seat] < cost) return false;
+    if (key === 'equip') {
+      const item = bm.shop[seat]?.equip;
+      if (!item || bm.equipment[seat]) return false;
+      bm.gold[seat] -= cost;
+      bm.equipment[seat] = item;
+      bm.shop[seat].equip = null;
+      return true;
+    }
+    if (key === 'shard') {
+      if (bm.star[seat] >= 3) return false;
+      bm.gold[seat] -= cost;
+      bm.shards[seat] += 1;
+      bloodUpgradeStar(seat);
+      return true;
+    }
+    if (key === 'dice') {
+      if (bm.skills[seat].length >= 2) return false;
+      const skill = Blood.randomSkill(bm.skills[seat]);
+      if (!skill) return false;
+      bm.gold[seat] -= cost;
+      const roll = 1 + Math.floor(Math.random() * 6);
+      const tier = roll <= 3 ? 'common' : roll <= 5 ? 'rare' : 'legendary';
+      const picked = Blood.randomSkill(bm.skills[seat], tier) || skill;
+      bm.skills[seat].push(picked);
+      bloodLog(`${pad(seat)} 号掷出 ${roll} 点，获得${Blood.TIERS[tier]}技能【${Blood.SKILLS[picked].name}】`);
+      return true;
+    }
+    if (key === 'supply') {
+      bm.gold[seat] -= cost;
+      bloodDraw(seat, 2);
+      return true;
+    }
+    return false;
+  }
+
+  function resolveShop(actions) {
+    if (!g.blood || g.phase !== 'shop') return;
+    const bm = g.blood;
+    if (bm.shopResolved) return;
+    bm.shopResolved = true;
+    actions.forEach((action) => {
+      if (!isAliveSeat(action.seat) || bm.shop[action.seat]?.locked) return;
+      const buys = Array.isArray(action.payload?.buys) ? action.payload.buys.slice(0, 4) : [];
+      buys.forEach((key) => bloodApplyBuy(action.seat, key));
+    });
+    g.aliveSeats.forEach((seat) => { bm.shopLock[seat] = false; });
+    civic.beginDiscussion();
+  }
+
+  function bloodMitigate(seat, amount, kind) {
+    if (amount <= 0) return 0;
+    const bm = g.blood;
+    let left = amount;
+    if (bm.equipment[seat] === 'renwang') left = Math.max(1, left - 1);
+    else if (!bm.equipment[seat] && bloodHas(seat, 'qingzhuang')) left = Math.max(1, left - 1);
+    return left;
+  }
+
+  function bloodDamage(seat, amount, { floor = 1 } = {}) {
+    if (!g.blood || !isAliveSeat(seat) || amount <= 0) return 0;
+    const bm = g.blood;
+    let left = bloodMitigate(seat, amount, 'hit');
+    if (floor > 0) left = Math.min(left, Math.max(0, bm.hp[seat] - floor));
+    if (left <= 0) return 0;
+    const before = bm.hp[seat];
+    bm.hp[seat] = Math.max(0, before - left);
+    const dealt = before - bm.hp[seat];
+    if (bm.hp[seat] <= 0 && bloodHas(seat, 'niepan') && !bm.skillUsed[seat].includes('niepan')) {
+      bm.skillUsed[seat].push('niepan');
+      bm.hp[seat] = 2;
+      bloodDraw(seat, 2);
+      bloodLog(`${pad(seat)} 号触发【涅槃】，回复到 2 点气血并摸 2 张牌`);
+    }
+    return dealt;
+  }
+
+  function bloodTryWuxie(seat, label) {
+    if (bloodHas(seat, 'wuxie') && !g.blood.skillUsed[seat].includes('wuxie')) {
+      g.blood.skillUsed[seat].push('wuxie');
+      bloodLog(`${pad(seat)} 号发动【无懈可击】，抵消了${label}`);
+      return true;
+    }
+    return false;
+  }
+
+  function bloodYiya(target, source) {
+    if (!isAliveSeat(target) || !isAliveSeat(source)) return;
+    if (!bloodHas(target, 'yiya') || g.blood.skillDay[target] === g.day) return;
+    g.blood.skillDay[target] = g.day;
+    const done = bloodDamage(source, 1, { floor: 1 });
+    if (done > 0) bloodLog(`${pad(target)} 号发动【以牙还牙】，对 ${pad(source)} 号造成 1 点伤害`);
+  }
+
+  function playBloodCard(seat, card, target) {
+    const bm = g.blood;
+    const def = Blood.cardById(card);
+    if (!def || !isAliveSeat(seat)) return;
+    if (card === 'shan' || !bloodTakeCard(seat, card)) return;
+    bm.actionUsed[seat] = true;
+    bm.cardPlayed.push({ seat, card, target });
+    if (card === 'tao') {
+      if (!isAliveSeat(target)) return;
+      bloodLog(`${pad(seat)} 号打出【桃】，${pad(target)} 号回复气血`);
+      bloodHeal(target, 2);
+      return;
+    }
+    if (!isAliveSeat(target) || target === seat) return;
+    if (card === 'sha') {
+      bloodLog(`${pad(seat)} 号对 ${pad(target)} 号打出【杀】`);
+      if (bloodHas(target, 'jianji')) bloodDraw(target, 1);
+      if (bloodTryWuxie(target, '【杀】')) return;
+      const bm2 = g.blood;
+      if (bm2.equipment[target] === 'bagua' && !bm2.equipmentUsed[target]) {
+        bm2.equipmentUsed[target] = true;
+        bloodLog(`${pad(target)} 号的【八卦阵】抵消了这次【杀】`);
+        return;
+      }
+      const wushuang = bloodHas(seat, 'wushuang') && !bm2.skillUsed[seat].includes('wushuang');
+      if (!wushuang && bm2.hand[target].includes('shan')) {
+        bloodTakeCard(target, 'shan');
+        bloodLog(`${pad(target)} 号打出【闪】，抵消了【杀】`);
+        return;
+      }
+      if (wushuang) {
+        bm2.skillUsed[seat].push('wushuang');
+        bloodLog(`${pad(seat)} 号发动【天下无双】，这一刀无法被闪避`);
+      }
+      const amount = bloodDamage(target, wushuang ? 3 : 1, { floor: 1 });
+      if (amount > 0) bloodYiya(target, seat);
+      return;
+    }
+    if (card === 'chai') {
+      bloodLog(`${pad(seat)} 号对 ${pad(target)} 号打出【拆】`);
+      if (bloodTryWuxie(target, '【拆】')) return;
+      if (g.blood.equipment[target]) {
+        g.blood.equipment[target] = null;
+        bloodLog(`${pad(target)} 号的装备被拆掉`);
+      } else {
+        const lost = Math.min(1, g.blood.gold[target]);
+        g.blood.gold[target] -= lost;
+        bloodLog(`${pad(target)} 号没有装备，失去 ${lost} 金`);
+      }
+    }
+  }
+
+  function playBloodSkill(seat, skill, target) {
+    const bm = g.blood;
+    const def = Blood.skillById(skill);
+    if (!def || !bloodHas(seat, skill) || !isAliveSeat(seat)) return;
+    if (bloodSkillUsedToday(seat, skill)) return;
+    bm.actionUsed[seat] = true;
+    bm.skillPlayed.push({ seat, skill, target });
+    if (skill === 'taoyuan') {
+      bloodMarkSkill(seat, skill);
+      g.aliveSeats.forEach((s) => bloodHeal(s, 1));
+      bloodLog(`${pad(seat)} 号发动【桃园结义】，所有存活玩家回复 1 点气血`);
+      return;
+    }
+    if (skill === 'xiaoshi') {
+      bloodMarkSkill(seat, skill);
+      const card = bm.hand[seat][0];
+      if (card) {
+        bloodTakeCard(seat, card);
+        bloodDraw(seat, 1);
+        bloodLog(`${pad(seat)} 号发动【小试身手】，弃 1 张摸 1 张`);
+      }
+      return;
+    }
+    if (skill === 'xietianzi') {
+      if (!isAliveSeat(target)) return;
+      bloodMarkSkill(seat, skill);
+      bm.voteWeight[target] = 3;
+      bloodLog(`${pad(seat)} 号发动【挟天子以令诸侯】，${pad(target)} 号今天的投票算 3 票`);
+      return;
+    }
+    if (!isAliveSeat(target) || target === seat) return;
+    if (bloodTryWuxie(target, `【${def.name}】`)) return;
+    if (skill === 'shunshou') {
+      bloodMarkSkill(seat, skill);
+      const stolen = Math.min(1, bm.gold[target]);
+      bm.gold[target] -= stolen;
+      bm.gold[seat] += stolen;
+      bloodLog(`${pad(seat)} 号对 ${pad(target)} 号发动【顺手牵羊】，获得 ${stolen} 金`);
+      return;
+    }
+    if (skill === 'bingliang') {
+      bloodMarkSkill(seat, skill);
+      bm.incomePenalty[target] += 3;
+      bloodLog(`${pad(seat)} 号对 ${pad(target)} 号发动【兵粮寸断】，其下次工资 -3 金`);
+      return;
+    }
+    if (skill === 'lebu') {
+      bloodMarkSkill(seat, skill);
+      bm.shopLock[target] = true;
+      bloodLog(`${pad(seat)} 号对 ${pad(target)} 号发动【乐不思蜀】，其明天商店锁定`);
+      return;
+    }
+    if (skill === 'juedou') {
+      bloodMarkSkill(seat, skill);
+      if (bloodTakeCard(target, 'sha')) {
+        bloodLog(`${pad(seat)} 号对 ${pad(target)} 号发动【决斗】，${pad(target)} 号弃掉 1 张【杀】`);
+        return;
+      }
+      const amount = bloodDamage(target, 2, { floor: 1 });
+      bloodLog(`${pad(seat)} 号对 ${pad(target)} 号发动【决斗】，${pad(target)} 号没有【杀】，受到 ${amount} 点伤害`);
+    }
+  }
+
+  function processBloodDayActions() {
+    if (!g.blood || g.phase !== 'day') return false;
+    const cardActions = fetchActions(g.day, 'card')
+      .filter((a) => !g.blood.cardResolved.includes(`${a.seat}:${a.day}`));
+    if (cardActions.length) {
+      const action = cardActions[0];
+      g.blood.cardResolved.push(`${action.seat}:${action.day}`);
+      if (isAliveSeat(action.seat) && !g.blood.actionUsed[action.seat]) {
+        playBloodCard(action.seat, action.payload?.card, Number(action.target));
+      }
+      return true;
+    }
+    const skillActions = fetchActions(g.day, 'skill')
+      .filter((a) => !g.blood.skillResolved.includes(`${a.seat}:${a.day}`));
+    if (skillActions.length) {
+      const action = skillActions[0];
+      g.blood.skillResolved.push(`${action.seat}:${action.day}`);
+      if (isAliveSeat(action.seat) && !g.blood.actionUsed[action.seat]) {
+        playBloodSkill(action.seat, action.payload?.skill, Number(action.target));
+      }
+      return true;
+    }
+    return false;
+  }
+
+  function botBloodPlay(seat) {
+    if (!g.blood || g.blood.actionUsed[seat] || !isAliveSeat(seat)) return;
+    const bm = g.blood;
+    const others = g.aliveSeats.filter((s) => s !== seat);
+    if (!others.length) return;
+    if (bm.hp[seat] <= 2 && bm.hand[seat].includes('tao') && Math.random() < 0.8) {
+      record(seat, 'card', seat, { card: 'tao', target: seat });
+      return;
+    }
+    const skill = bm.skills[seat].find((s) => BLOOD_ACTIVE_SKILLS.includes(s) && !bloodSkillUsedToday(seat, s));
+    if (skill && Math.random() < 0.55) {
+      const target = skill === 'taoyuan' ? null : randomOf(others);
+      record(seat, 'skill', target, { skill, target });
+      return;
+    }
+    if (bm.hand[seat].includes('sha') && Math.random() < 0.55) {
+      const target = randomOf(others);
+      record(seat, 'card', target, { card: 'sha', target });
+    } else if (bm.hand[seat].includes('chai') && Math.random() < 0.35) {
+      const target = randomOf(others);
+      record(seat, 'card', target, { card: 'chai', target });
+    }
+  }
+
+  function startRescue() {
+    g.phase = 'rescue';
+    g.step = 'rescue';
+    g.deadline = clock() + RESCUE_MS;
+    bloodLog(`濒死：${g.blood.rescueQueue.map(pad).join('、')} 号，持有【桃】的玩家可以救人（${RESCUE_MS / 1000} 秒）`, 'warning');
+  }
+
+  function botRescueChoice(seat) {
+    const target = randomOf(g.blood.rescueQueue);
+    return target == null ? null : { target, payload: { target } };
+  }
+
+  function resolveRescue(actions) {
+    if (!g.blood || g.phase !== 'rescue') return;
+    const bm = g.blood;
+    const saved = [];
+    const queue = [...bm.rescueQueue];
+    queue.forEach((target) => {
+      if (bm.hp[target] > 0) {
+        saved.push(target);
+        return;
+      }
+      const row = actions.find((a) => a.target === target && isAliveSeat(a.seat) &&
+        bm.hand[a.seat]?.includes('tao'));
+      if (!row) return;
+      bloodTakeCard(row.seat, 'tao');
+      bloodHeal(target, 2);
+      saved.push(target);
+      bloodLog(`${pad(row.seat)} 号打出【桃】，救回 ${pad(target)} 号`);
+    });
+    bm.rescueSaved = saved;
+    bm.rescueQueue = [];
+    const deaths = queue
+      .filter((seat) => !saved.includes(seat))
+      .map((seat) => ({ seat, reason: bm.nightReasons[seat] || 'wolf' }));
+    if (deaths.length) {
+      if (applyDeaths(deaths, 'night') === 'continue') civic.afterDeaths('dawn');
+      return;
+    }
+    bloodLog('所有濒死玩家都被救回');
+    civic.afterDeaths('dawn');
+  }
+
+  function finishBloodNight() {
+    const bm = g.blood;
+    const hits = [];
+    const totals = new Map();
+    const note = (seat, amount) => {
+      if (amount > 0) totals.set(seat, (totals.get(seat) || 0) + amount);
+    };
+    const aliveWolves = g.teams.wolves.filter(isAliveSeat);
+    const knifeStar = aliveWolves.length ? Math.max(...aliveWolves.map(bloodStar)) : 1;
+    const witchSeat = roleSeat('witch');
+    const poisonStar = witchSeat != null && isAliveSeat(witchSeat) ? bloodStar(witchSeat) : 1;
+    const knifeDamage = knifeStar >= 2 ? 3 : 2;
+    const poisonDamage = poisonStar >= 2 ? 3 : 2;
+    const knifeTarget = g.kill;
+    const poisonTarget = g.poison;
+
+    if (knifeTarget != null && isAliveSeat(knifeTarget)) {
+      let blocked = false;
+      if (bm.equipment[knifeTarget] === 'bagua' && !bm.equipmentUsed[knifeTarget] && knifeStar < 3) {
+        bm.equipmentUsed[knifeTarget] = true;
+        blocked = true;
+        bloodLog(`${pad(knifeTarget)} 号的【八卦阵】挡下了一次夜间伤害`);
+      }
+      if (!blocked && g.saved) {
+        bloodHeal(knifeTarget, poisonStar >= 2 ? 3 : 2);
+      } else if (!blocked) {
+        const dealt = bloodDamage(knifeTarget, knifeDamage, { floor: 0 });
+        note(knifeTarget, dealt);
+        bm.nightReasons[knifeTarget] ??= 'wolf';
+      }
+    }
+    if (poisonTarget != null && isAliveSeat(poisonTarget)) {
+      const dealt = bloodDamage(poisonTarget, poisonDamage, { floor: 0 });
+      note(poisonTarget, dealt);
+      bm.nightReasons[poisonTarget] ??= 'poison';
+    }
+
+    totals.forEach((amount, seat) => {
+      if (amount > 0) {
+        hits.push({ seat, amount });
+        bloodLog(`${pad(seat)} 号受到 ${amount} 点伤害，当前气血 ${bm.hp[seat]}/${Blood.MAX_HP}`, 'dawn');
+      }
+    });
+    bm.lastHits = hits;
+    bm.nightHits = {};
+
+    g.kill = null;
+    g.guarded = null;
+    g.saved = false;
+    g.poison = null;
+    bloodLog(`第 ${g.day} 天 · 天亮了`, 'dawn');
+
+    const dying = [];
+    for (const seat of g.aliveSeats) {
+      if (bm.hp[seat] > 0) continue;
+      const saver = g.aliveSeats.find((s) => s !== seat && bloodHas(s, 'qisi') &&
+        !bm.skillUsed[s].includes('qisi'));
+      if (saver != null) {
+        bm.skillUsed[saver].push('qisi');
+        bm.hp[seat] = 2;
+        bloodLog(`${pad(saver)} 号发动【起死回生】，将 ${pad(seat)} 号从濒死中救回`);
+        continue;
+      }
+      dying.push(seat);
+    }
+    if (dying.length) {
+      bm.rescueQueue = dying;
+      startRescue();
+      return;
+    }
+    civic.afterDeaths('dawn');
   }
 
   function drawThiefCards() {
@@ -158,6 +735,12 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
     g.votes = null;
     g.runoffSeats = null;
     g.step = null;
+    if (g.blood) {
+      g.blood.nightReasons = {};
+      g.blood.rescueQueue = [];
+      g.blood.rescueSaved = [];
+      g.blood.lastHits = [];
+    }
     g.nightQueue = buildNightQueue();
     g.nightIndex = 0;
     if (!first) g.log.push({ day: g.day, kind: 'night', text: `第 ${g.day} 夜 · 天黑请闭眼` });
@@ -198,6 +781,10 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
     if (step === 'vote' || step === 'runoff') {
       return g.aliveSeats.filter((s) => !g.voteBanned.includes(s));
     }
+    if (g.blood && step === 'shop') return g.aliveSeats;
+    if (g.blood && step === 'rescue') {
+      return g.aliveSeats.filter((s) => g.blood.hand[s]?.includes('tao'));
+    }
     return civicPhase(g.phase) ? civic.expected(step) : [];
   }
 
@@ -225,6 +812,12 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
       if (allActed(g.step, actions) || timer.expired(now)) {
         resolveNightStep(actions);
       }
+    } else if (g.phase === 'shop') {
+      if (fillBotActions(g.step, actions)) actions = fetchActions(g.day, g.step);
+      if (allActed(g.step, actions) || now >= g.deadline) resolveShop(actions);
+    } else if (g.phase === 'rescue') {
+      if (fillBotActions(g.step, actions)) actions = fetchActions(g.day, g.step);
+      if (allActed(g.step, actions) || now >= g.deadline) resolveRescue(actions);
     } else if (g.phase === 'dawn') {
       if (now >= g.deadline) civic.sunrise();
     } else if (civicPhase(g.phase)) {
@@ -235,6 +828,7 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
     } else if (g.phase === 'day') {
       const handled = handleDaySpecial(actions);
       if (handled) return;
+      if (processBloodDayActions()) return;
       const speaker = currentSpeaker();
       if (speaker == null) {
         startVote();
@@ -245,6 +839,10 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
         return;
       }
       if (isBotSeat(speaker)) {
+        if (g.blood) {
+          botBloodPlay(speaker);
+          processBloodDayActions();
+        }
         g.log.push({ day: g.day, kind: 'system', text: `${pad(speaker)} 号（人机）不发言，跳过` });
         advanceSpeech();
         return;
@@ -379,6 +977,8 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
         const candidates = step === 'policeVote' ? g.sheriffCandidates : g.runoffSeats;
         choice = { target: randomOf(candidates.filter(isAliveSeat)) ?? -1, payload: {} };
       } else if (step === 'order' || step === 'badge') choice = null; // timeout gives the default
+      else if (step === 'shop') choice = botShopChoice(seat);
+      else if (step === 'rescue') choice = botRescueChoice(seat);
       else choice = botNightChoice(step, seat, row.role);
       if (!choice) continue;
       record(seat, step, choice.target, choice.payload);
@@ -444,7 +1044,14 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
       const row = get(seat);
       const target = row?.target;
       if (target && target !== seat && isAliveSeat(target)) {
-        g.checks.push({ day: g.day, target, killer: g.teams.wolves.includes(target), seat });
+        const check = { day: g.day, target, killer: g.teams.wolves.includes(target), seat };
+        if (g.blood && bloodStar(seat) >= 2) {
+          check.role = rowBySeat(target)?.role;
+          check.handCount = g.blood.hand[target]?.length || 0;
+          check.hasTao = Boolean(g.blood.hand[target]?.includes('tao'));
+        }
+        if (g.blood && bloodStar(seat) >= 3) check.gold = g.blood.gold[target];
+        g.checks.push(check);
       }
     }
 
@@ -468,6 +1075,7 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
   }
 
   function finishNight() {
+    if (g.blood) return finishBloodNight();
     const alive = aliveSet();
     const rawDeaths = [];
     if (g.kill != null) {
@@ -514,6 +1122,7 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
   }
 
   function announceDeath(death, when) {
+    if (g.blood) g.blood.hp[death.seat] = 0;
     g.deaths.push({ day: g.day, seat: death.seat, reason: death.reason });
     civic.death(death, when);
     g.log.push({
@@ -679,7 +1288,9 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
     }
     g.phase = 'day';
     g.step = 'day';
-    const alive = g.aliveSeats.filter((s) => !isBotSeat(s)).sort((a, b) => a - b);
+    // 血月牌局让每个人机也占一个发言位，人机回合会快速出牌/跳过，牌才能真正进入循环。
+    const alive = (g.blood ? [...g.aliveSeats] : g.aliveSeats.filter((s) => !isBotSeat(s)))
+      .sort((a, b) => a - b);
     const hasBots = g.aliveSeats.some((s) => isBotSeat(s));
     const deaths = g.deaths.filter(d => d.day === g.day);
     const sheriff = alive.includes(g.sheriff) && alive.length > 1;
@@ -705,6 +1316,12 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
 
   function advanceSpeech() {
     if (!g || g.phase !== 'day') return;
+    const doneSeat = g.speechOrder?.[g.speechIndex];
+    if (g.blood && doneSeat != null && isAliveSeat(doneSeat) && !isBotSeat(doneSeat)) {
+      const talked = fetchActions(g.day, 'speech').some((a) => a.seat === doneSeat) ||
+        fetchActions(g.day, 'chat').some((a) => a.seat === doneSeat);
+      if (talked) g.blood.spoke[doneSeat].push(g.day);
+    }
     const skipped = [];
     g.speechIndex += 1;
     while (g.speechIndex < g.speechOrder.length) {
@@ -857,6 +1474,17 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
     });
   }
 
+  function bloodTallyVotes(rows) {
+    const counts = {};
+    rows.forEach(({ seat, target }) => {
+      if (target == null || target <= 0) return;
+      counts[target] = (counts[target] || 0) + (g.blood.voteWeight[seat] || 1);
+    });
+    let max = 0;
+    Object.values(counts).forEach((n) => { if (n > max) max = n; });
+    return { counts, top: max === 0 ? [] : Object.keys(counts).filter((k) => counts[k] === max).map(Number), max };
+  }
+
   function resolveVote(actions) {
     const eligible = g.aliveSeats.filter((s) => !g.voteBanned.includes(s));
     let rows = actions.filter((a) => eligible.includes(a.seat) && (a.target === -1 || isAliveSeat(a.target)));
@@ -864,7 +1492,7 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
       rows = rows.map((a) => ({ ...a, target: g.runoffSeats.includes(a.target) ? a.target : -1 }));
     }
     const voteText = rows.map((a) => `${pad(a.seat)}→${a.target > 0 ? pad(a.target) : '弃'}`).join('、');
-    const tally = Rules.tallyVotes(rows, g.sheriff);
+    const tally = g.blood ? bloodTallyVotes(rows) : Rules.tallyVotes(rows, g.sheriff);
     g.votes = tally.counts;
     g.voteHistory = g.voteHistory || [];
     g.voteHistory.push({ day: g.day, phase: g.phase, counts: { ...tally.counts } });
@@ -896,6 +1524,11 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
     }
 
     const target = tally.top[0];
+    if (g.blood) {
+      rows.filter((a) => a.target === target).forEach((a) => {
+        if (isAliveSeat(a.seat)) g.blood.voteHit[a.seat].push(g.day);
+      });
+    }
     const targetRow = rowBySeat(target);
     g.log.push({ day: g.day, kind: 'vote', text: `${pad(target)} 号得票最多（${tally.counts[target]} 票）` });
 
@@ -942,6 +1575,13 @@ export function engine({ state: g, roster, mode, actions = [], clock = Date.now 
     if (reveal && !isBoss) g.hunterRevealed = true;
 
     if (target && isAliveSeat(target)) {
+      if (g.blood && bloodStar(seat) >= 2) {
+        const bonus = bloodStar(seat) - 1;
+        g.aliveSeats.forEach((s) => {
+          if (!g.teams.wolves.includes(s)) g.blood.gold[s] += bonus;
+        });
+        bloodLog(`${pad(seat)} 号的 ${bloodStar(seat)} 星猎人留下一笔遗产：存活好人各 +${bonus} 金`);
+      }
       // 夜间死因不公开：夜猎开枪不播报翻牌/带走，只公布出局座位。
       if (from !== 'night') {
         g.log.push({

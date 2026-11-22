@@ -132,6 +132,18 @@
         'villager', 'villager', 'villager', 'villager',
         'seer', 'witch', 'hunter', 'thief'],
     },
+    {
+      id: 'bloodmoon',
+      name: '血月牌局（娱乐）',
+      desc: '9 人娱乐局：3 狼 3 民 + 预言家、女巫、猎人。每人 4 气血、金币和手牌；狼刀扣血不直接出局，天亮先领工资逛商店。不计 Elo。',
+      play: '夜里狼刀和女巫毒改为扣气血，天亮先领工资、买碎片/装备/补给/魔法骰子，再发言出牌或放技能。放逐仍是直接处决；狼人屠边或好人清狼获胜。',
+      sheriff: false,
+      rated: false,
+      bloodmoon: true,
+      roles: ['werewolf', 'werewolf', 'werewolf',
+        'villager', 'villager', 'villager',
+        'seer', 'witch', 'hunter'],
+    },
   ];
 
   const CUSTOM_ORDER = [

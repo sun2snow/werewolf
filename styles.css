@@ -1202,6 +1202,70 @@ h1.h3 {
   .sr-stat { flex: 1; min-width: 0; }
 }
 
+/* ---------- 血月牌局 ---------- */
+.sr-blood-stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 3px;
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: #5d616a;
+  line-height: 1.2;
+}
+
+.sr-blood-stats span {
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #f4f5f7;
+  white-space: nowrap;
+}
+
+.sr-blood-stats .sr-hp-low { background: #fdecec; color: #c33a40; }
+.sr-blood-stats .sr-gold { background: #fff7e0; color: #8a6413; }
+.sr-blood-stats .sr-star { background: #f3efff; color: #6a4bd8; }
+
+.sr-blood-mini {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  font-size: 12px;
+  color: #4a4e57;
+}
+
+.sr-blood-mini span {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #f4f5f7;
+}
+
+.sr-blood-card {
+  flex-basis: 100%;
+  border-top: 1px dashed var(--sr-line);
+  padding-top: 8px;
+  margin-top: 2px;
+}
+
+.sr-blood-card-title {
+  font-size: 12px;
+  color: var(--sr-muted);
+  margin-bottom: 6px;
+}
+
+.sr-blood-hand {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.sr-blood-hand .btn { padding: 0.15rem 0.55rem; font-size: 12px; }
+
+.sr-blood-picked {
+  outline: 2px solid #c33a40;
+  outline-offset: 1px;
+}
+
 @media (max-width: 575.98px) {
   .navbar .container { flex-wrap: wrap; row-gap: 6px; }
   .navbar .sr-account { margin-left: auto; }

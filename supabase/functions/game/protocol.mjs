@@ -50,6 +50,27 @@ export function project(g, me) {
   out.step = out.phase === 'settling' ? 'settling' : g.phase === 'night' ? 'night' : g.step;
   if (g.phase === 'badge') out.badgePending = g.badgePending;
   if (g.phase === 'lastwords') out.lastWordsSeat = g.lastWordsSeat;
+  if (g.blood) {
+    const bm = g.blood;
+    const handCount = {};
+    Object.keys(bm.hand).forEach((seat) => { handCount[seat] = bm.hand[seat].length; });
+    out.blood = {
+      maxHp: globalThis.WOLF_BLOODMOON.MAX_HP,
+      hp: bm.hp,
+      gold: bm.gold,
+      star: bm.star,
+      shards: bm.shards,
+      equipment: bm.equipment,
+      equipmentUsed: bm.equipmentUsed,
+      skills: bm.skills,
+      handCount,
+      actionUsed: bm.actionUsed,
+      voteWeight: bm.voteWeight,
+      locked: bm.shopLock,
+      rescueQueue: bm.rescueQueue,
+      lastHits: bm.lastHits,
+    };
+  }
   if (g.phase === 'finished') {
     Object.assign(out, {
       rating: g.rating,
@@ -59,6 +80,16 @@ export function project(g, me) {
     });
   }
   if (!me || me.departed) return out;
+  if (g.blood && g.blood.hand[me.seat]) {
+    out.bloodMe = {
+      hand: g.blood.hand[me.seat],
+      shop: g.blood.shop[me.seat] || null,
+      shards: g.blood.shards[me.seat],
+      skillDay: g.blood.skillDay[me.seat],
+      usedSkills: g.blood.skillUsed[me.seat],
+      locked: Boolean(g.blood.shopLock[me.seat]),
+    };
+  }
   if (g.nightPending?.some((d) => d.seat === me.seat)) out.pendingDead = true;
   if (g.phase === 'hunter' && me.seat === g.hunterPending) {
     Object.assign(out, { phase: 'hunter', step: 'hunter', hunterPending: me.seat });
@@ -139,6 +170,31 @@ export function submit(engine, me, cmd, actions) {
     engine.record(seat, 'explode', target, { explode: true, target });
     return;
   }
+  if (step === 'card' || step === 'skill') {
+    check(g.blood && g.phase === 'day' && alive(seat) && engine.inTime(seat));
+    check(!g.blood.actionUsed[seat]);
+    check(!actions.some((a) => a.day === g.day && (a.step === 'card' || a.step === 'skill') && a.seat === seat));
+    if (step === 'card') {
+      const card = payload.card;
+      check(typeof card === 'string' && card !== 'shan' && g.blood.hand[seat].includes(card));
+      check(alive(target));
+      check(card === 'tao' || target !== seat);
+      engine.record(seat, step, target, { card, target });
+    } else {
+      const skill = payload.skill;
+      const def = globalThis.WOLF_BLOODMOON.skillById(skill);
+      check(g.blood.skills[seat].includes(skill) && def);
+      check(['xiaoshi', 'shunshou', 'bingliang', 'lebu', 'juedou', 'taoyuan', 'xietianzi'].includes(skill));
+      check(g.blood.skillDay[seat] !== g.day && !g.blood.skillUsed[seat].includes(skill));
+      if (skill === 'taoyuan' || skill === 'xiaoshi') check(target === null);
+      else {
+        check(alive(target));
+        if (skill !== 'xietianzi') check(target !== seat);
+      }
+      engine.record(seat, step, target, { skill, target });
+    }
+    return;
+  }
   check(step === g.step && !repeat);
   if (step === 'day') {
     check(me.role === 'knight' && !g.knightUsed && alive(target) && target !== seat);
@@ -192,6 +248,19 @@ export function submit(engine, me, cmd, actions) {
         data = { poison: payload.poison };
       }
       break;
+    case 'shop': {
+      check(g.blood && g.phase === 'shop' && !g.blood.shop[seat]?.locked);
+      const buys = payload.buys;
+      check(Array.isArray(buys) && buys.length <= 4 &&
+        buys.every((key) => ['shard', 'equip', 'supply', 'dice'].includes(key)));
+      data = { buys };
+      break;
+    }
+    case 'rescue':
+      check(g.blood && g.phase === 'rescue' && g.blood.rescueQueue.includes(target) &&
+        g.blood.hand[seat]?.includes('tao'));
+      data = { target };
+      break;
     case 'vote':
     case 'runoff':
       check(
@@ -220,7 +289,7 @@ export function replayEvent(a) {
     ? 'duel'
     : step === 'hunter'
     ? 'hunter'
-    : ['chat', 'wolfchat', 'speech', 'kick', 'leave', 'afk', 'deathConfirm', 'policeSignup', 'policeSpeech', 'policeVote', 'policeRunoff', 'order', 'badge', 'lastwords'].includes(step)
+    : ['chat', 'wolfchat', 'speech', 'kick', 'leave', 'afk', 'deathConfirm', 'policeSignup', 'policeSpeech', 'policeVote', 'policeRunoff', 'order', 'badge', 'lastwords', 'card', 'skill', 'shop', 'rescue'].includes(step)
     ? step
     : ['vote', 'runoff'].includes(step)
     ? 'vote'

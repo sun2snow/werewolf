@@ -715,6 +715,69 @@ test('act shows submitting instantly, blocks duplicates, yields polls, rolls bac
   assert.match(w.document.querySelector('#toast').textContent, /网络失败/);
 });
 
+test('bloodmoon shop, card and rescue panels submit the expected intents', async (t) => {
+  const { w, run } = await page(t);
+  const mode = MODES.find((m) => m.id === 'bloodmoon');
+  assert.ok(mode, '血月牌局模式存在');
+  const roster = mode.roles.map((_, i) => ({ id: 'p' + i, name: 'P' + i, online: true, is_bot: false }));
+  const referee = engine({ state: null, roster, mode });
+  referee.start();
+  const me = roster[0];
+  const seat = me.seat;
+  const target = referee.state.aliveSeats.find((s) => s !== seat);
+  const data = {
+    code: '123456', revision: 1, hostId: me.id,
+    options: { mode: mode.id, g: project(referee.state, me) },
+    me, members: roster.map(({ role, ...r }) => r),
+    channel: 'chat', chat: [], wolfPicks: [], submitted: [],
+  };
+  w.snap = data;
+  run(`profile={id:'${me.id}',status:'approved'}; session={code:'123456',playerId:'${me.id}'};
+    loadRatings=async()=>{}; applySnapshot(snap); sent=[]; roomCommand=async(op,args)=>{sent.push({op,args});};`);
+  const area = w.document.querySelector('#actionArea');
+  const click = (re) => {
+    const btn = [...area.querySelectorAll('button')].find((b) => re.test(b.textContent));
+    assert.ok(btn, `找不到按钮：${re}`);
+    btn.click();
+  };
+
+  run(`g.phase='shop'; g.step='shop'; g.bloodMe.shop={equip:'bagua',locked:false}; g.bloodMe.locked=false;
+    g.bloodMe.shards=0; g.bloodMe.hand=['sha']; g.bloodMe.skillDay=0; g.bloodMe.usedSkills=[];
+    g.blood.gold[${seat}]=10; g.blood.star[${seat}]=1; g.blood.shards[${seat}]=0; g.blood.equipment[${seat}]=null;
+    g.blood.skills[${seat}]=[]; g.blood.handCount[${seat}]=1; g.blood.locked[${seat}]=false; submitted=new Set(); renderRoom();`);
+  assert.match(area.textContent, /商店/);
+  click(/碎片/);
+  click(/魔法骰子/);
+  click(/确认购物/);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(w.sent.length, 1);
+  assert.equal(w.sent[0].args.step, 'shop');
+  assert.deepEqual([...w.sent[0].args.payload.buys], ['shard', 'dice']);
+
+  run(`g.phase='day'; g.step='day'; g.bloodMe.hand=['sha']; g.bloodMe.skillDay=0; g.bloodMe.usedSkills=[];
+    g.blood.skills[${seat}]=[]; g.blood.actionUsed[${seat}]=false; g.blood.hp[${seat}]=4; g.blood.rescueQueue=[];
+    submitted=new Set(); sent=[]; renderRoom();`);
+  click(/^杀$/);
+  assert.equal(run('pick && pick.kind'), 'blood');
+  run(`togglePick(${target}); renderRoom();`);
+  assert.deepEqual([...run('pick.selected')], [target]);
+  click(/^确认$/);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(w.sent.length, 1);
+  assert.equal(w.sent[0].args.step, 'card');
+  assert.equal(w.sent[0].args.target, target);
+  assert.equal(w.sent[0].args.payload.card, 'sha');
+
+  run(`g.phase='rescue'; g.step='rescue'; g.blood.rescueQueue=[${target}]; g.blood.hp[${target}]=0;
+    g.bloodMe.hand=['tao']; submitted=new Set(); sent=[]; renderRoom();`);
+  click(/用桃/);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(w.sent.length, 1);
+  assert.equal(w.sent[0].args.step, 'rescue');
+  assert.equal(w.sent[0].args.target, target);
+  assert.equal(w.sent[0].args.payload.target, target);
+});
+
 test('unchanged snapshots skip DOM rebuilds; poll cadence adapts to recent activity', async (t) => {
   const { w, run } = await page(t);
   const mode = MODES[0];

@@ -7,21 +7,22 @@
   <link rel="icon" type="image/png" href="icon.png">
   <link rel="apple-touch-icon" href="icon.png">
   <link rel="stylesheet" href="vendor/bootstrap.min.css?v=4.6.2">
-  <link rel="stylesheet" href="styles.css?v=1.3.0">
+  <link rel="stylesheet" href="styles.css?v=1.4.0">
 </head>
 <body>
   <main class="container rulebook py-4" id="top">
     <header>
       <a href="./index.html">← 返回游戏主页</a>
       <h1 class="mt-3">狼人杀 · 详细规则</h1>
-      <p>适用于本站 <strong>v1.1.3（服务端裁判）</strong>。本站按屠边判胜：场上狼和好人一样多，不代表狼已经赢了。线下局或其他平台的玩法可能不同。</p>
+      <p>适用于本站 <strong>v1.4.0（服务端裁判）</strong>。本站按屠边判胜：场上狼和好人一样多，不代表狼已经赢了。线下局或其他平台的玩法可能不同。</p>
       <p><strong>第一次玩？</strong>先选「6人新手局」。拿牌后看自己的身份和技能；夜晚等行动面板提示，白天轮到自己再发言，最后投票。点击座位只是选择，点「确认」才算提交。</p>
     </header>
     <nav id="contents" aria-label="规则目录" class="card card-body mb-4">
       <strong>按问题查找</strong>
       <ul class="list-inline mb-0">
         <li class="list-inline-item"><a href="#lobby">怎样开局</a></li>
-        <li class="list-inline-item"><a href="#modes">八种板子</a></li>
+        <li class="list-inline-item"><a href="#modes">九种板子</a></li>
+        <li class="list-inline-item"><a href="#bloodmoon">血月牌局</a></li>
         <li class="list-inline-item"><a href="#victory">谁算赢</a></li>
         <li class="list-inline-item"><a href="#night">夜晚与用药</a></li>
         <li class="list-inline-item"><a href="#day">发言与投票</a></li>
@@ -38,7 +39,7 @@
     </section>
 
     <section id="modes">
-      <h2>二、八种板子怎么配牌</h2>
+      <h2>二、九种板子怎么配牌</h2>
       <p>下表是开局发牌时的配置。「狼人」指普通狼人。在有白狼王或狼美人的板子里，这张特殊狼牌算在四张狼牌之内。</p>
       <div class="table-responsive">
         <table class="table table-sm table-striped">
@@ -53,6 +54,7 @@
             <tr data-mode="wmq12"><th scope="row">12人狼美人骑士局</th><td>狼人×3、狼美人×1</td><td>4</td><td>预言家、女巫、守卫、骑士</td></tr>
             <tr data-mode="qbt12"><th scope="row">12人丘比特局</th><td>狼人×4</td><td>4</td><td>预言家、女巫、猎人、丘比特</td></tr>
             <tr data-mode="dz12"><th scope="row">12人盗贼局</th><td>狼人×4</td><td>4</td><td>预言家、女巫、猎人、盗贼</td></tr>
+            <tr data-mode="bloodmoon"><th scope="row">血月牌局（娱乐）</th><td>狼人×3</td><td>3</td><td>预言家、女巫、猎人</td></tr>
           </tbody>
         </table>
       </div>
@@ -76,8 +78,86 @@
         <dd>第一晚连情侣，可能形成人狼第三方。情侣同生共死，丘比特随情侣阵营或独立第三方结算；场上阵营更复杂，好人与狼都需提防第三方搅局，发言中要留意情侣线索。</dd>
         <dt>12人盗贼局</dt>
         <dd>第一晚盗贼从两张底牌选身份，可能变狼，使狼牌数量不确定。好人不能默认四狼，需结合查验与发言判断盗贼归属；狼队也可能多出一张隐藏狼牌。</dd>
+        <dt>9人血月牌局（娱乐）</dt>
+        <dd>三狼对三民加预女猎，无警长，<strong>不计 Elo</strong>。夜里狼刀和女巫毒改为扣气血，天亮先领工资、逛私人商店、升星买牌，再讨论出牌；放逐仍然直接处决。完整规则见<a href="#bloodmoon">下一节</a>。</dd>
       </dl>
       <p class="text-muted small">规则参考：板子配置与狼人「空刀／自刀／白天自爆跳过白天」、平民无技能等措辞取自 <a href="https://wiki.biligame.com/lrs/%E9%A6%96%E9%A1%B5" rel="noopener">狼人杀 BWIKI</a>；该百科多数角色页尚为空模板，其余角色技能与流程细则按通行官方规则补全，并以本站服务端裁判的实际判定为准（自爆时机以<a href="#skills">上文阶段列表</a>为准，含放逐投票与 PK）。</p>
+    </section>
+
+    <section id="bloodmoon">
+      <h2>附：血月牌局（娱乐）怎么玩</h2>
+      <p>血月牌局把狼人杀的发言投票和「金铲铲」式的经济、升星、商店，以及「三国杀」式的卡牌、装备、技能揉在一起。9 人局：3 狼、3 平民、预言家、女巫、猎人；<strong>没有警长竞选，不计 Elo</strong>。胜负仍按屠边：狼人让平民或神职全部出局，好人让三张狼牌全部出局。</p>
+
+      <h3 class="h5 mt-4">1. 气血、夜晚与濒死</h3>
+      <ul>
+        <li>每人开局 <strong>4 点气血、8 金、1 张手牌</strong>。夜里狼刀和女巫毒<strong>只扣气血，不直接出局</strong>；天亮时气血归零的玩家先进入 <strong>20 秒濒死窗口</strong>，手上有【桃】的玩家可以救他（回复 2 点），没人救才出局。</li>
+        <li><strong>受害者只知道掉了多少血和还剩多少血，不知道来源是狼刀还是女巫毒。</strong>公共记录也只写「X 号受到 N 点伤害，当前气血 …」，不写刀/毒。狼队知道刀了谁，女巫知道自己毒了谁；其他人都只能猜。</li>
+        <li>白天卡牌和技能造成的伤害<strong>最低只打到 1 血</strong>，不能直接把人打死；<strong>放逐和猎人开枪仍然是直接处决</strong>。夜晚伤害、白天处决分开结算。</li>
+        <li>遗言沿用通用规则：首夜死者有遗言；第 2 夜起夜死无遗言；被放逐者有遗言。</li>
+      </ul>
+
+      <h3 class="h5 mt-4">2. 每天早上的商店与工资</h3>
+      <p>天亮结算完伤害和濒死后，进入 <strong>20 秒商店</strong>。先自动发工资并补 1 张手牌，再购物。商店和手牌<strong>只对自己可见</strong>；气血、金币、星级、碎片、装备和技能是公开信息。</p>
+      <ul>
+        <li><strong>工资</strong>：基础 3 金 + 利息（每 10 金 +1，最多 +3；有【囤积癖】上限 +1）+ 上一天发过言 +1 + 上一天投给最高票 +1 + 自己气血 ≤1 时 +1。技能【日进斗金】+2、【富可敌国】+5；2 星平民额外 +1。</li>
+        <li><strong>碎片 3 金</strong>：获得 1 个碎片，自动升星。1★→2★ 需要 2 个碎片，2★→3★ 再需要 3 个。</li>
+        <li><strong>装备 4 金</strong>：随机买到【八卦阵】或【仁王盾】，只有 1 个装备栏。八卦阵每局挡一次狼刀或【杀】（3 星狼刀无视）；仁王盾让每次受到的伤害 -1（最低 1）。</li>
+        <li><strong>补给 2 金</strong>：摸 2 张牌。手牌上限 3（【手气不错】为 4），超出的牌不保留。</li>
+        <li><strong>魔法骰子 5 金</strong>：掷 1 颗六面骰抽技能：1–3 点出普通技能，4–5 点出稀有技能，6 点出传说技能。每人最多 2 个技能；已满 2 个时不能再买骰子。</li>
+        <li>商店被【乐不思蜀】锁定时，当天不能购买；工资和补牌照常。</li>
+      </ul>
+
+      <h3 class="h5 mt-4">3. 星级效果</h3>
+      <p>所有玩家从 1★ 开始。升星不改变身份，只强化该身份的一条能力：</p>
+      <div class="table-responsive">
+        <table class="table table-sm table-striped">
+          <thead><tr><th scope="col">身份</th><th scope="col">2★</th><th scope="col">3★</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">狼人</th><td>狼刀伤害 3</td><td>狼刀伤害 3，且无视【八卦阵】</td></tr>
+            <tr><th scope="row">预言家</th><td>查验额外得知目标身份、手牌数、是否有【桃】</td><td>再额外得知目标当前金币</td></tr>
+            <tr><th scope="row">女巫</th><td>毒药伤害 3；解药回复 3</td><td>额外获得 1 张【桃】</td></tr>
+            <tr><th scope="row">猎人</th><td>开枪带走人时，存活好人各 +1 金</td><td>开枪带走人时，存活好人各 +2 金</td></tr>
+            <tr><th scope="row">平民</th><td>每天工资 +1</td><td>每天多发工资时额外摸 1 张牌</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="h5 mt-4">4. 卡牌</h3>
+      <p>每人<strong>每天最多打出 1 张牌或 1 个主动技能</strong>，出牌公开。手牌上限 3（【手气不错】为 4）。</p>
+      <ul>
+        <li><strong>杀</strong>：对一名其他玩家造成 1 点伤害。目标有【闪】会自动打出抵消；【八卦阵】、【无懈可击】、【轻装上阵】和【仁王盾】也可能减伤或取消。</li>
+        <li><strong>闪</strong>：不能主动打出，被【杀】指定时自动使用，抵消这次【杀】。</li>
+        <li><strong>桃</strong>：回复 2 点气血（最多 4），可以给自己或别人；夜里濒死时可以用来救人。</li>
+        <li><strong>拆</strong>：拆掉目标装备；目标没有装备时改为失去 1 金。</li>
+      </ul>
+
+      <h3 class="h5 mt-4">5. 技能（魔法骰子抽取）</h3>
+      <div class="table-responsive">
+        <table class="table table-sm table-striped">
+          <thead><tr><th scope="col">稀有度</th><th scope="col">技能</th><th scope="col">效果</th></tr></thead>
+          <tbody>
+            <tr><th scope="row" rowspan="6">普通</th><td>日进斗金</td><td>被动：每天工资 +2 金。</td></tr>
+            <tr><td>手气不错</td><td>被动：每天多摸 1 张牌，手牌上限 +1。</td></tr>
+            <tr><td>小试身手</td><td>主动：弃 1 张手牌，摸 1 张牌（不需要目标）。</td></tr>
+            <tr><td>见机行事</td><td>触发：成为【杀】的目标时摸 1 张牌。</td></tr>
+            <tr><td>囤积癖</td><td>被动：利息上限 +1（最多 +4）。</td></tr>
+            <tr><td>轻装上阵</td><td>被动：没有装备时，受到的伤害 -1（最低 1）。</td></tr>
+            <tr><th scope="row" rowspan="6">稀有</th><td>顺手牵羊</td><td>主动：获得另一名玩家 1 金。</td></tr>
+            <tr><td>兵粮寸断</td><td>主动：目标下次工资少 3 金。</td></tr>
+            <tr><td>乐不思蜀</td><td>主动：目标明天的商店锁定，不能购买。</td></tr>
+            <tr><td>以牙还牙</td><td>触发：受到其他玩家牌造成的伤害后，对其造成 1 点伤害；每天 1 次。</td></tr>
+            <tr><td>决斗</td><td>主动：目标弃 1 张【杀】，否则受到 2 点伤害。</td></tr>
+            <tr><td>桃园结义</td><td>主动：所有存活玩家回复 1 点气血；每局 1 次。</td></tr>
+            <tr><th scope="row" rowspan="6">传说</th><td>涅槃</td><td>触发：濒死时自动回复到 2 气血并摸 2 张牌；每局 1 次。</td></tr>
+            <tr><td>天下无双</td><td>触发：你的第一张【杀】伤害 +2，且不能被【闪】抵消；每局 1 次。</td></tr>
+            <tr><td>挟天子以令诸侯</td><td>主动：目标今天的投票算 3 票；每局 1 次。</td></tr>
+            <tr><td>富可敌国</td><td>被动：每天工资 +5 金。</td></tr>
+            <tr><td>起死回生</td><td>触发：一名其他玩家夜间气血归零时，自动救回他并回复 2 气血；每局 1 次。</td></tr>
+            <tr><td>无懈可击</td><td>触发：自动取消一次针对你的【杀】【拆】或主动技能；每局 1 次。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="text-muted small">主动技能每天最多用 1 个；标「每局 1 次」的技能整局只能生效一次。被动和触发技能不占用当天的出牌次数。所有卡牌、装备和技能的效果以服务端裁判实际结算为准。</p>
     </section>
 
     <section id="victory">
